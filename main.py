@@ -5,13 +5,12 @@ import signal
 import sys
 from dotenv import load_dotenv
 
-
 load_dotenv()
 
 sys.path.insert(0, "backend")
 
-from i18n import _  # type: ignore[import]
-from logging_setup import setup_logging  # type: ignore[import]
+from i18n import _  # type: ignore[import]  # noqa: E402
+from logging_setup import setup_logging  # type: ignore[import]  # noqa: E402
 
 setup_logging(
     level=logging.DEBUG if os.getenv("DEBUG", "").lower() == "true" else logging.INFO
