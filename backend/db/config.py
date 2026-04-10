@@ -16,7 +16,7 @@ DATABASE_URL = os.getenv(
 
 engine = create_async_engine(
     DATABASE_URL,
-    echo=os.getenv("DEBUG", "").lower() == "true",
+    echo=False,
     pool_size=int(os.getenv("POOL_MIN_SIZE", "10")),
     max_overflow=int(os.getenv("POOL_MAX_SIZE", "20")) - int(os.getenv("POOL_MIN_SIZE", "10")),
 )
