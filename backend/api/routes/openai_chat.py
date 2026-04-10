@@ -114,8 +114,15 @@ async def create_chat_completion(
         return StreamingResponse(sse_gen(), media_type="text/event-stream")
 
     parts: list[str] = []
+    reasoning_parts: list[str] = []
     async for chunk in stream:
         if chunk.chunk_type == "content" and chunk.content:
             parts.append(chunk.content)
+        if chunk.chunk_type == "think" and chunk.content:
+            reasoning_parts.append(chunk.content)
 
-    return build_completion_response("".join(parts), request.model)
+    return build_completion_response(
+        "".join(parts),
+        request.model,
+        reasoning="".join(reasoning_parts) or None,
+    )

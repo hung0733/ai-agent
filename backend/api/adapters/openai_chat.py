@@ -26,9 +26,17 @@ def build_queue_payload(req: OpenAIChatCompletionRequest) -> dict[str, object]:
     }
 
 
-def build_completion_response(content: str, model: str) -> dict[str, object]:
+def build_completion_response(
+    content: str,
+    model: str,
+    reasoning: str | None = None,
+) -> dict[str, object]:
     """Build a non-stream OpenAI chat completion payload."""
     now = int(time.time())
+    message: dict[str, object] = {"role": "assistant", "content": content}
+    if reasoning:
+        message["reasoning"] = reasoning
+
     return {
         "object": "chat.completion",
         "id": f"chatcmpl-{uuid.uuid4().hex}",
@@ -37,7 +45,7 @@ def build_completion_response(content: str, model: str) -> dict[str, object]:
         "choices": [
             {
                 "index": 0,
-                "message": {"role": "assistant", "content": content},
+                "message": message,
                 "finish_reason": "stop",
             }
         ],
