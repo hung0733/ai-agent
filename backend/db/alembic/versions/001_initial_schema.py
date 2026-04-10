@@ -34,7 +34,7 @@ def upgrade() -> None:
         'llm_group',
         sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
         sa.Column('user_id', sa.BigInteger(), nullable=False),
-        sa.Column('name', sa.BigInteger(), nullable=False),
+        sa.Column('name', sa.String(length=80), nullable=False),
         sa.PrimaryKeyConstraint('id'),
         sa.ForeignKeyConstraint(['user_id'], ['user_acc.id'], ),
     )

@@ -9,13 +9,13 @@ from db.entity import LlmGroupEntity
 
 class LlmGroupCreate(BaseModel):
     user_id: int
-    name: int
+    name: str
 
 
 class LlmGroupResponse(BaseModel):
     id: int
     user_id: int
-    name: int
+    name: str
 
     @classmethod
     def from_entity(cls, entity: LlmGroupEntity) -> "LlmGroupResponse":

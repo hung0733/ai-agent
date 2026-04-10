@@ -137,6 +137,7 @@ celerybeat.pid
 # Environments
 .env
 .envrc
+.worktrees/
 .venv
 env/
 venv/
@@ -216,4 +217,3 @@ CLAUDE.md
 data/
 llm/
 .envrc
-
