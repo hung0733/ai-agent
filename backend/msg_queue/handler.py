@@ -22,6 +22,7 @@ import logging
 from typing import Any, AsyncGenerator, Dict, Optional
 from uuid import UUID, uuid4
 
+from graph.agent import stream_agent_reply
 from i18n import _
 from msg_queue.manager import QueueManager, get_queue_manager
 from msg_queue.models import (
@@ -76,18 +77,15 @@ class MsgQueueHandler:
 
     @staticmethod
     async def collect_db_data(task: QueueTask) -> None:
-        """Load the Agent object from DB."""
+        """Minimal bridge path does not require DB agent loading yet."""
         logger.debug(_("任務 %s：collect_db_data (agent=%s)"), task.id, task.agent_id)
         try:
-            pass
-        except NotImplementedError:
-            raise
+            task.update_state(QueueTaskState.COLLECTED_DB_DATA)
         except Exception as exc:
             logger.error(_("任務 %s：collect_db_data 失敗：%s"), task.id, exc)
             task.update_state(QueueTaskState.ERROR)
             task.error = str(exc)
             raise
-        task.update_state(QueueTaskState.COLLECTED_DB_DATA)
 
     @staticmethod
     async def pack_memory(task: QueueTask) -> None:
@@ -119,12 +117,9 @@ class MsgQueueHandler:
 
     @staticmethod
     async def select_llm_model(task: QueueTask) -> None:
-        """Pick LLM model(s) based on msg_diff_level."""
+        """Use SYS_ACT_LLM as the single system-level model selection."""
         logger.debug(_("任務 %s：select_llm_model"), task.id)
         try:
-            if task.agent is None:
-                raise ValueError(_("Agent 未初始化 — 先執行 collect_db_data"))
-
             task.update_state(QueueTaskState.SELECTED_LLM_MODEL)
         except Exception as exc:
             logger.error(_("任務 %s：select_llm_model 失敗：%s"), task.id, exc)
@@ -134,18 +129,24 @@ class MsgQueueHandler:
 
     @staticmethod
     async def send_llm_msg(task: QueueTask) -> None:
-        """Stream the LLM response and push chunks to the task queue."""
+        """Stream the LangGraph response and push chunks to the task queue."""
         logger.debug(_("任務 %s：send_llm_msg"), task.id)
         try:
-            if task.agent is None:
-                raise ValueError(_("Agent 未初始化 — 先執行 collect_db_data"))
             if task.packed_message is None:
                 raise ValueError(_("訊息未打包 — 先執行 pack_message"))
 
             task.update_state(QueueTaskState.SENDING_TO_LLM)
 
-            task.update_state(QueueTaskState.RECEIVING_STREAM)
+            async for content in stream_agent_reply(
+                message=task.packed_message,
+                system_prompt=task.system_prompt,
+                think_mode=task.think_mode,
+            ):
+                task.update_state(QueueTaskState.RECEIVING_STREAM)
+                await task.stream_callback(content)
+
             task.update_state(QueueTaskState.STREAMING_TO_CLIENT)
+            await task.complete_callback({})
 
         except Exception as exc:
             logger.error(_("任務 %s：send_llm_msg 失敗：%s"), task.id, exc)
