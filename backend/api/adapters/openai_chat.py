@@ -44,16 +44,21 @@ def build_completion_response(content: str, model: str) -> dict[str, object]:
     }
 
 
-def build_stream_chunk(content: str, model: str) -> dict[str, object]:
+def build_stream_chunk(
+    content: str,
+    model: str,
+    chunk_type: str = "content",
+) -> dict[str, object]:
     """Build a single OpenAI SSE chat chunk."""
     now = int(time.time())
+    delta_key = "reasoning_content" if chunk_type == "think" else "content"
     return {
         "object": "chat.completion.chunk",
         "id": f"chatcmpl-{uuid.uuid4().hex}",
         "created": now,
         "model": model,
         "choices": [
-            {"index": 0, "delta": {"content": content}, "finish_reason": None}
+            {"index": 0, "delta": {delta_key: content}, "finish_reason": None}
         ],
     }
 

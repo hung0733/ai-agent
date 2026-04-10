@@ -188,6 +188,7 @@ def test_chat_completion_non_stream_collects_all_chunks(client: TestClient) -> N
 def test_chat_completion_stream_returns_sse(client: TestClient) -> None:
     async def fake_create_msg_queue(**kwargs: object):
         async def _gen():
+            yield StreamChunk(chunk_type="think", content="分析中")
             yield StreamChunk(chunk_type="content", content="Hel")
             yield StreamChunk(chunk_type="content", content="lo")
             yield StreamChunk(chunk_type="done")
@@ -210,6 +211,8 @@ def test_chat_completion_stream_returns_sse(client: TestClient) -> None:
 
     assert response.status_code == 200
     assert 'data: {"object":"chat.completion.chunk"' in body
+    assert '"reasoning_content":' in body
+    assert '"content":"Hel"' in body
     assert "data: [DONE]" in body
 
 

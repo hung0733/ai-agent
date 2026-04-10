@@ -93,9 +93,13 @@ async def create_chat_completion(
     if request.stream:
         async def sse_gen() -> AsyncIterator[str]:
             async for chunk in stream:
-                if chunk.chunk_type == "content" and chunk.content:
+                if chunk.chunk_type in {"content", "think"} and chunk.content:
                     payload = json.dumps(
-                        build_stream_chunk(chunk.content, request.model),
+                        build_stream_chunk(
+                            chunk.content,
+                            request.model,
+                            chunk.chunk_type,
+                        ),
                         separators=(",", ":"),
                     )
                     yield f"data: {payload}\n\n"
