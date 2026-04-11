@@ -39,13 +39,11 @@ async def chat_node(state: AgentState, config: RunnableConfig):
 
     messages_to_send += state["messages"]
     
-    for model in models:
-        # 呼叫模型 (用 ainvoke 獲取完整回應)
-        async for chunk in model.astream(messages_to_send):
-            yield chunk
+    # 呼叫模型 (用 ainvoke 獲取完整回應)
+    response = await models[0].ainvoke(messages_to_send)
 
-        # 返回最新嘅 AIMessage，LangGraph 會自動 append 落 State 度
-        return {"messages": [response]}
+    # 返回最新嘅 AIMessage，LangGraph 會自動 append 落 State 度
+    return {"messages": [response]}
     
     
 # 建立藍圖 (Workflow)
