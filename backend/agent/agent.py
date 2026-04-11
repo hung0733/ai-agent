@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime, time, timezone
+import time
+from datetime import datetime, timezone
 import logging
 from typing import Any, AsyncGenerator, Dict
 
@@ -124,7 +125,13 @@ class Agent:
             logger.debug("🔧 正在使用模型")
             # 準備 config
             config = GraphNode.prepare_chat_node_config(
-                thread_id=self.session_id, models=models, sys_prompt=sys_prompt, think_mode=think_mode, agent_db_id=self.agent_db_id, args=metadata
+                thread_id=self.session_id,
+                models=models,
+                sys_prompt=sys_prompt,
+                involves_secrets=False,
+                think_mode=think_mode,
+                agent_db_id=self.agent_db_id,
+                args=metadata,
             )
 
             async for msg, _ in Agent._graph.astream(
@@ -189,6 +196,10 @@ class Agent:
                     )
         except Exception as e:
             logger.error(
-                f"❌ LLM 處理失敗，agentId: {self.agent_id}, sessionId: {self.session_id} ({self.name}): {e}"
+                _("LLM 處理失敗，agentId: %s, sessionId: %s (%s): %s"),
+                self.agent_id,
+                self.session_id,
+                self.recv_agent_name,
+                e,
             )
             raise

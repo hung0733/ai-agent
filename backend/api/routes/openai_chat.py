@@ -72,7 +72,7 @@ async def create_chat_completion(
 
     try:
         payload = build_queue_payload(request)
-        session_id = f"session_{uuid.uuid4()}"
+        session_id = f"default-{agent_id[6:]}"
         stream = MsgQueueHandler.create_msg_queue(
             agent_id=agent_id,
             session_id=session_id,

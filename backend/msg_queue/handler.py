@@ -19,10 +19,14 @@ from __future__ import annotations
 from decimal import Decimal
 from datetime import datetime
 import logging
+import os
 from typing import Any, AsyncGenerator, Dict, Optional
 from uuid import UUID, uuid4
 
-from graph.agent import stream_agent_reply
+from langchain_openai import ChatOpenAI
+
+from agent.agent import Agent
+from backend.utils.tools import Tools
 from i18n import _
 from msg_queue.manager import QueueManager, get_queue_manager
 from msg_queue.models import (
@@ -77,9 +81,14 @@ class MsgQueueHandler:
 
     @staticmethod
     async def collect_db_data(task: QueueTask) -> None:
-        """Minimal bridge path does not require DB agent loading yet."""
+        """從數據庫載入 agent 資料並建立 Agent 實例。"""
         logger.debug(_("任務 %s：collect_db_data (agent=%s)"), task.id, task.agent_id)
         try:
+            agent = await Agent.get_agent(
+                agent_id=task.agent_id,
+                session_id=task.session_id,
+            )
+            task.agent = agent
             task.update_state(QueueTaskState.COLLECTED_DB_DATA)
         except Exception as exc:
             logger.error(_("任務 %s：collect_db_data 失敗：%s"), task.id, exc)
@@ -120,6 +129,11 @@ class MsgQueueHandler:
         """Use SYS_ACT_LLM as the single system-level model selection."""
         logger.debug(_("任務 %s：select_llm_model"), task.id)
         try:
+            task.model_set = ChatOpenAI(base_url=Tools.require_env("SYS_ACT_LLM_ENDPOINT"),
+        api_key=Tools.require_env("SYS_ACT_LLM_ENDPOINT"),
+        model=Tools.require_env("SYS_ACT_LLM_ENDPOINT"),
+        streaming=True,
+        stream_usage=True)
             task.update_state(QueueTaskState.SELECTED_LLM_MODEL)
         except Exception as exc:
             logger.error(_("任務 %s：select_llm_model 失敗：%s"), task.id, exc)
@@ -129,21 +143,29 @@ class MsgQueueHandler:
 
     @staticmethod
     async def send_llm_msg(task: QueueTask) -> None:
-        """Stream the LangGraph response and push chunks to the task queue."""
+        """使用 Agent 實例串流 LangGraph 回應並推送 chunk 到任務隊列。"""
         logger.debug(_("任務 %s：send_llm_msg"), task.id)
         try:
             if task.packed_message is None:
                 raise ValueError(_("訊息未打包 — 先執行 pack_message"))
+            if task.agent is None:
+                raise ValueError(_("Agent 未初始化 — 先執行 collect_db_data"))
 
             task.update_state(QueueTaskState.SENDING_TO_LLM)
 
-            async for content in stream_agent_reply(
+            models = task.model_set or []
+            sys_prompt = task.system_prompt or ""
+            think_mode = task.think_mode if task.think_mode is not None else False
+
+            async for chunk in task.agent.send(
+                models=models,
+                sys_prompt=sys_prompt,
                 message=task.packed_message,
-                system_prompt=task.system_prompt,
-                think_mode=task.think_mode,
+                think_mode=think_mode,
+                metadata=task.metadata,
             ):
                 task.update_state(QueueTaskState.RECEIVING_STREAM)
-                await task.stream_callback(content)
+                await task.stream_callback(chunk)
 
             task.update_state(QueueTaskState.STREAMING_TO_CLIENT)
             await task.complete_callback({})

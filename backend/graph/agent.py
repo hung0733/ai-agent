@@ -18,7 +18,7 @@ class AgentState(MessagesState):
 @staticmethod
 async def chat_node(state: AgentState, config: RunnableConfig):
     # 由 config 攞返 LLM 同 System Prompt 出嚟
-    models: list[BaseChatModel] = config["configurable"]["model"]  # type: ignore
+    models: list[BaseChatModel] = config["configurable"]["models"]  # type: ignore
     sys_prompt: str = config["configurable"]["sys_prompt"] or ""  # type: ignore
     think_mode: bool = config["configurable"]["think_mode"]  # type: ignore
     args: Dict[str, Any] = config["configurable"]["args"] 
