@@ -6,7 +6,7 @@ import logging
 from typing import Any, AsyncGenerator, Dict
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessageChunk, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 from sqlalchemy import select
 
 from backend.db.config import async_session_factory
@@ -134,66 +134,77 @@ class Agent:
                 args=metadata,
             )
 
-            async for msg, _ in Agent._graph.astream(
+            async for chunk in Agent._graph.astream(
                 {"messages": [HumanMessage(content=message, additional_kwargs={"datetime": datetime.now(timezone.utc)})]},
                 config=config,
                 stream_mode="updates",
             ):
-                # 我哋只處理 LLM 嘔出嚟嘅 Chunk，忽略其他 LangGraph 嘅系統事件
-                if isinstance(msg, AIMessageChunk):
+                # LangGraph stream_mode="updates" 返回 {'node_name': {'messages': [...]}}
+                # 遍歷所有 node 的輸出
+                if isinstance(chunk, dict):
+                    messages = []
+                    for node_output in chunk.values():
+                        if isinstance(node_output, dict):
+                            messages.extend(node_output.get("messages", []))
+                else:
+                    messages = [chunk]
 
-                    # 處理 Thinking (思考)
-                    reasoning_content = msg.additional_kwargs.get(
-                        "reasoning_content"
-                    )
-                    if reasoning_content:
-                        logger.debug(
-                            f"🧠 收到推理內容，長度：{len(reasoning_content)}"
+                for msg in messages:
+                    # 我哋只處理 LLM 嘔出嚟嘅消息，忽略其他 LangGraph 嘅系統事件
+                    if isinstance(msg, (AIMessage, AIMessageChunk)):
+                        logger.debug(msg)
+                        # 處理 Thinking (思考)
+                        reasoning_content = msg.additional_kwargs.get(
+                            "reasoning_content"
                         )
-                        yield StreamChunk(
-                            chunk_type="think",
-                            content=str(reasoning_content),
-                            timestamp=time.time(),
-                        )
-
-                    # 處理 Tool Calls (工具)
-                    if hasattr(msg, "tool_call_chunks") and msg.tool_call_chunks:
-                        for tool_chunk in msg.tool_call_chunks:
+                        if reasoning_content:
                             logger.debug(
-                                f"🔧 收到工具調用：{tool_chunk.get('name')}"
+                                f"🧠 收到推理內容，長度：{len(reasoning_content)}"
                             )
                             yield StreamChunk(
-                                chunk_type="tool",
-                                content=tool_chunk.get("name"),
-                                data={"tool_call": tool_chunk},
+                                chunk_type="think",
+                                content=str(reasoning_content),
                                 timestamp=time.time(),
                             )
 
-                    # 處理 Content (普通對話文字)
-                    if msg.content:
+                        # 處理 Tool Calls (工具)
+                        if hasattr(msg, "tool_call_chunks") and msg.tool_call_chunks:
+                            for tool_chunk in msg.tool_call_chunks:
+                                logger.debug(
+                                    f"🔧 收到工具調用：{tool_chunk.get('name')}"
+                                )
+                                yield StreamChunk(
+                                    chunk_type="tool",
+                                    content=tool_chunk.get("name"),
+                                    data={"tool_call": tool_chunk},
+                                    timestamp=time.time(),
+                                )
+
+                        # 處理 Content (普通對話文字)
+                        if msg.content:
+                            content = (
+                                msg.content
+                                if isinstance(msg.content, str)
+                                else str(msg.content)
+                            )
+                            logger.debug(f"💬 收到內容，長度：{len(content)}")
+                            yield StreamChunk(
+                                chunk_type="content",
+                                content=content,
+                                timestamp=time.time(),
+                            )
+                    elif isinstance(msg, ToolMessage):
                         content = (
                             msg.content
                             if isinstance(msg.content, str)
                             else str(msg.content)
                         )
-                        logger.debug(f"💬 收到內容，長度：{len(content)}")
+                        logger.debug(f"💬 收到工具結果，長度：{len(content)}")
                         yield StreamChunk(
-                            chunk_type="content",
+                            chunk_type="tool_result",
                             content=content,
                             timestamp=time.time(),
                         )
-                elif isinstance(msg, ToolMessage):
-                    content = (
-                        msg.content
-                        if isinstance(msg.content, str)
-                        else str(msg.content)
-                    )
-                    logger.debug(f"💬 收到工具結果，長度：{len(content)}")
-                    yield StreamChunk(
-                        chunk_type="tool_result",
-                        content=content,
-                        timestamp=time.time(),
-                    )
         except Exception as e:
             logger.error(
                 _("LLM 處理失敗，agentId: %s, sessionId: %s (%s): %s"),

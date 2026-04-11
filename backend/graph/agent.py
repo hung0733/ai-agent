@@ -15,7 +15,6 @@ class AgentState(MessagesState):
     summary: str
     
 
-@staticmethod
 async def chat_node(state: AgentState, config: RunnableConfig):
     # 由 config 攞返 LLM 同 System Prompt 出嚟
     models: list[BaseChatModel] = config["configurable"]["models"]  # type: ignore
@@ -42,7 +41,8 @@ async def chat_node(state: AgentState, config: RunnableConfig):
     
     for model in models:
         # 呼叫模型 (用 ainvoke 獲取完整回應)
-        response = await model.ainvoke(messages_to_send)
+        async for chunk in model.astream(messages_to_send):
+            yield chunk
 
         # 返回最新嘅 AIMessage，LangGraph 會自動 append 落 State 度
         return {"messages": [response]}

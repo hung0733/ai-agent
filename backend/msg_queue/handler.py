@@ -129,11 +129,13 @@ class MsgQueueHandler:
         """Use SYS_ACT_LLM as the single system-level model selection."""
         logger.debug(_("任務 %s：select_llm_model"), task.id)
         try:
-            task.model_set = ChatOpenAI(base_url=Tools.require_env("SYS_ACT_LLM_ENDPOINT"),
-        api_key=Tools.require_env("SYS_ACT_LLM_ENDPOINT"),
-        model=Tools.require_env("SYS_ACT_LLM_ENDPOINT"),
-        streaming=True,
-        stream_usage=True)
+            task.model_set = [ChatOpenAI(
+                base_url=Tools.require_env("SYS_ACT_LLM_ENDPOINT"),
+                api_key=Tools.require_env("SYS_ACT_LLM_API_KEY"),
+                model=Tools.require_env("SYS_ACT_LLM_MODEL"),
+                streaming=True,
+                stream_usage=True,
+            )]
             task.update_state(QueueTaskState.SELECTED_LLM_MODEL)
         except Exception as exc:
             logger.error(_("任務 %s：select_llm_model 失敗：%s"), task.id, exc)
