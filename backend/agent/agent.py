@@ -122,7 +122,6 @@ class Agent:
     ) -> AsyncGenerator[StreamChunk, None]:
         
         try:
-            logger.debug("🔧 正在使用模型")
             # 準備 config
             config = GraphNode.prepare_chat_node_config(
                 thread_id=self.session_id,
@@ -148,15 +147,14 @@ class Agent:
 
                 # 我哋只處理 LLM 嘔出嚟嘅消息，忽略其他 LangGraph 嘅系統事件
                 if isinstance(msg, (AIMessage, AIMessageChunk)):
-                    logger.debug(msg)
                     # 處理 Thinking (思考)
                     reasoning_content = msg.additional_kwargs.get(
                         "reasoning_content"
                     )
                     if reasoning_content:
-                        logger.debug(
-                            f"🧠 收到推理內容，長度：{len(reasoning_content)}"
-                        )
+                        # logger.debug(
+                        #     f"🧠 收到推理內容，長度：{len(reasoning_content)}"
+                        # )
                         yield StreamChunk(
                             chunk_type="think",
                             content=str(reasoning_content),
@@ -166,13 +164,24 @@ class Agent:
                     # 處理 Tool Calls (工具)
                     if hasattr(msg, "tool_call_chunks") and msg.tool_call_chunks:
                         for tool_chunk in msg.tool_call_chunks:
-                            logger.debug(
-                                f"🔧 收到工具調用：{tool_chunk.get('name')}"
-                            )
+                            # logger.debug(
+                            #     f"🔧 收到工具調用：{tool_chunk.get('name')}"
+                            # )
                             yield StreamChunk(
                                 chunk_type="tool",
                                 content=tool_chunk.get("name"),
                                 data={"tool_call": tool_chunk},
+                                timestamp=time.time(),
+                            )
+                    elif hasattr(msg, "tool_call") and msg.tool_call:
+                        for tc in getattr(msg, "tool_calls", []):
+                            # logger.debug(
+                            #     f"🔧 收到工具調用：{tool_chunk.get('name')}"
+                            # )
+                            yield StreamChunk(
+                                chunk_type="tool",
+                                content=tc.get("name"),
+                                data={"tool_call": tc},
                                 timestamp=time.time(),
                             )
 
@@ -183,7 +192,7 @@ class Agent:
                             if isinstance(msg.content, str)
                             else str(msg.content)
                         )
-                        logger.debug(f"💬 收到內容，長度：{len(content)}")
+                        #logger.debug(f"💬 收到內容，長度：{len(content)}")
                         yield StreamChunk(
                             chunk_type="content",
                             content=content,
@@ -195,7 +204,7 @@ class Agent:
                         if isinstance(msg.content, str)
                         else str(msg.content)
                     )
-                    logger.debug(f"💬 收到工具結果，長度：{len(content)}")
+                    # logger.debug(f"💬 收到工具結果，長度：{len(content)}")
                     yield StreamChunk(
                         chunk_type="tool_result",
                         content=content,

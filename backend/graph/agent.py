@@ -38,10 +38,19 @@ async def chat_node(state: AgentState, config: RunnableConfig):
         )
 
     messages_to_send += state["messages"]
+    last_message : BaseMessage = state["messages"][-1]
+    
+    logger.info(f"💬 Send Message, Length: {len(last_message.content)}, {last_message.content}")
     
     for model in models:
         # 呼叫模型 (用 ainvoke 獲取完整回應)
         response = await model.ainvoke(messages_to_send)
+        
+        if hasattr(response, "tool_calls") and len(response.tool_calls) > 0:
+            for tc in getattr(response, "tool_calls", []):
+                logger.info(f"🔧 收到工具調用：{tc.get('name')}, 📥 傳入參數: {tc.get('args')}")
+        else:
+            logger.info(f"💬 收到內容，長度：{len(response.content)}, {response.content}")
 
         # 返回最新嘅 AIMessage，LangGraph 會自動 append 落 State 度
         return {"messages": [response]}
