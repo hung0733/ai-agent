@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import traceback
 from datetime import datetime, timezone
 import logging
 from typing import Any, AsyncGenerator, Dict
@@ -8,10 +9,12 @@ from typing import Any, AsyncGenerator, Dict
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from backend.db.config import async_session_factory
 from backend.db.entity import AgentEntity, SessionEntity
 from backend.graph.agent import SUMMARY_TRIGGER_TOKEN, SUMMARY_USAGE_TOKEN, workflow
+from backend.graph.checkpoint import ExtLanggraphCheckpointer
 from backend.graph.graph_node import GraphNode
 from backend.msg_queue.models import StreamChunk
 from i18n import _
@@ -55,7 +58,7 @@ class Agent:
         self.stm_summary_token = SUMMARY_USAGE_TOKEN
         
         if Agent._graph is None:
-            Agent._graph = workflow.compile()
+            Agent._graph = workflow.compile(checkpointer=ExtLanggraphCheckpointer())
             
     @classmethod
     async def get_db_agent(
@@ -70,14 +73,28 @@ class Agent:
             ValueError: 當找不到 agent 或 session 時。
         """
         async with async_session_factory() as session:
-            agent_stmt = select(AgentEntity).where(AgentEntity.agent_id == agent_id)
+            agent_stmt = (
+                select(AgentEntity)
+                .where(AgentEntity.agent_id == agent_id)
+                .options(
+                    selectinload(AgentEntity.user),
+                    selectinload(AgentEntity.llm_group),
+                )
+            )
             agent_result = await session.execute(agent_stmt)
             agent = agent_result.scalar_one_or_none()
 
             if agent is None:
                 raise ValueError(_("找不到 agent: %s"), agent_id)
 
-            session_stmt = select(SessionEntity).where(SessionEntity.session_id == session_id)
+            session_stmt = (
+                select(SessionEntity)
+                .where(SessionEntity.session_id == session_id)
+                .options(
+                    selectinload(SessionEntity.recv_agent).selectinload(AgentEntity.user),
+                    selectinload(SessionEntity.sender_agent),
+                )
+            )
             session_result = await session.execute(session_stmt)
             session_entity = session_result.scalar_one_or_none()
 
@@ -88,7 +105,7 @@ class Agent:
             sender_agent = session_entity.sender_agent
 
             recv_agent_name = recv_agent.name if recv_agent else ""
-            sender_agent_name = sender_agent.name if sender_agent else ""
+            sender_agent_name = sender_agent.name if sender_agent else recv_agent.user.name
 
             return (
                 agent.id,
@@ -131,6 +148,8 @@ class Agent:
                 think_mode=think_mode,
                 agent_db_id=self.agent_db_id,
                 args=metadata,
+                sender_name=self.sender_agent_name,
+                recv_name=self.recv_agent_name,
             )
 
             async for chunk in Agent._graph.astream(
@@ -162,8 +181,8 @@ class Agent:
                         )
 
                     # 處理 Tool Calls (工具)
-                    if hasattr(msg, "tool_call_chunks") and msg.tool_call_chunks:
-                        for tool_chunk in msg.tool_call_chunks:
+                    if hasattr(msg, "tool_call_chunks") and msg.tool_call_chunks: # type: ignore
+                        for tool_chunk in msg.tool_call_chunks: # type: ignore
                             # logger.debug(
                             #     f"🔧 收到工具調用：{tool_chunk.get('name')}"
                             # )
@@ -173,7 +192,7 @@ class Agent:
                                 data={"tool_call": tool_chunk},
                                 timestamp=time.time(),
                             )
-                    elif hasattr(msg, "tool_call") and msg.tool_call:
+                    elif hasattr(msg, "tool_call") and msg.tool_call: # type: ignore
                         for tc in getattr(msg, "tool_calls", []):
                             # logger.debug(
                             #     f"🔧 收到工具調用：{tool_chunk.get('name')}"
@@ -212,10 +231,11 @@ class Agent:
                     )
         except Exception as e:
             logger.error(
-                _("LLM 處理失敗，agentId: %s, sessionId: %s (%s): %s"),
+                _("LLM 處理失敗，agentId: %s, sessionId: %s (%s): %s\n%s"),
                 self.agent_id,
                 self.session_id,
                 self.recv_agent_name,
                 e,
+                traceback.format_exc(),
             )
             raise

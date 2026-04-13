@@ -1,10 +1,12 @@
 import logging
 from typing import Any, Dict
 
-from langchain_core.messages import AIMessage, BaseMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langchain_core.language_models.chat_models import BaseChatModel
+
+from backend.db.dto.agent_msg_hist import AgentMsgHistCreate
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +22,9 @@ async def chat_node(state: AgentState, config: RunnableConfig):
     models: list[BaseChatModel] = config["configurable"]["models"]  # type: ignore
     sys_prompt: str = config["configurable"]["sys_prompt"] or ""  # type: ignore
     think_mode: bool = config["configurable"]["think_mode"]  # type: ignore
-    args: Dict[str, Any] = config["configurable"]["args"] 
+    args: Dict[str, Any] = config["configurable"]["args"]
+    sender_name: str = config["configurable"]["sender_name"] or ""  # type: ignore
+    recv_name: str = config["configurable"]["recv_name"] or ""  # type: ignore
 
     messages_to_send: list[BaseMessage] = []
     

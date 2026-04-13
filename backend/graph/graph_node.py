@@ -17,6 +17,8 @@ class GraphNode:
         think_mode: Optional[bool],
         agent_db_id:int,
         args: Optional[Dict[str, Any]] = None,
+        sender_name: str = "",
+        recv_name: str = "",
     ) -> RunnableConfig:
         return {
             "configurable": {
@@ -27,5 +29,7 @@ class GraphNode:
                 "think_mode": think_mode,
                 "args": args,
                 "agent_db_id": agent_db_id,
+                "sender_name": sender_name,
+                "recv_name": recv_name,
             }
         }

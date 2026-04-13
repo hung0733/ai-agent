@@ -16,14 +16,12 @@ Pipeline order:
 
 from __future__ import annotations
 
-from decimal import Decimal
-from datetime import datetime
 import logging
-import os
+import traceback
 from typing import Any, AsyncGenerator, Dict, Optional
-from uuid import UUID, uuid4
 
 from langchain_openai import ChatOpenAI
+from pydantic import SecretStr
 
 from agent.agent import Agent
 from backend.utils.tools import Tools
@@ -91,7 +89,12 @@ class MsgQueueHandler:
             task.agent = agent
             task.update_state(QueueTaskState.COLLECTED_DB_DATA)
         except Exception as exc:
-            logger.error(_("任務 %s：collect_db_data 失敗：%s"), task.id, exc)
+            logger.error(
+                _("任務 %s：collect_db_data 失敗：%s\n%s"),
+                task.id,
+                exc,
+                traceback.format_exc(),
+            )
             task.update_state(QueueTaskState.ERROR)
             task.error = str(exc)
             raise
@@ -104,7 +107,12 @@ class MsgQueueHandler:
 
             task.update_state(QueueTaskState.PACKED_MEMORY)
         except Exception as exc:
-            logger.error(_("任務 %s：pack_memory 失敗：%s"), task.id, exc)
+            logger.error(
+                _("任務 %s：pack_memory 失敗：%s\n%s"),
+                task.id,
+                exc,
+                traceback.format_exc(),
+            )
             task.update_state(QueueTaskState.ERROR)
             task.error = str(exc)
             raise
@@ -119,7 +127,12 @@ class MsgQueueHandler:
             task.packed_message += task.message or ""
             task.update_state(QueueTaskState.MESSAGES_PACKED)
         except Exception as exc:
-            logger.error(_("任務 %s：pack_message 失敗：%s"), task.id, exc)
+            logger.error(
+                _("任務 %s：pack_message 失敗：%s\n%s"),
+                task.id,
+                exc,
+                traceback.format_exc(),
+            )
             task.update_state(QueueTaskState.ERROR)
             task.error = str(exc)
             raise
@@ -129,16 +142,23 @@ class MsgQueueHandler:
         """Use SYS_ACT_LLM as the single system-level model selection."""
         logger.debug(_("任務 %s：select_llm_model"), task.id)
         try:
-            task.model_set = [ChatOpenAI(
-                base_url=Tools.require_env("SYS_ACT_LLM_ENDPOINT"),
-                api_key=Tools.require_env("SYS_ACT_LLM_API_KEY"),
-                model=Tools.require_env("SYS_ACT_LLM_MODEL"),
-                streaming=True,
-                stream_usage=True,
-            )]
+            task.model_set = [
+                ChatOpenAI(
+                    base_url=Tools.require_env("SYS_ACT_LLM_ENDPOINT"),
+                    api_key=SecretStr(Tools.require_env("SYS_ACT_LLM_API_KEY")),
+                    model=Tools.require_env("SYS_ACT_LLM_MODEL"),
+                    streaming=True,
+                    stream_usage=True,
+                )
+            ]
             task.update_state(QueueTaskState.SELECTED_LLM_MODEL)
         except Exception as exc:
-            logger.error(_("任務 %s：select_llm_model 失敗：%s"), task.id, exc)
+            logger.error(
+                _("任務 %s：select_llm_model 失敗：%s\n%s"),
+                task.id,
+                exc,
+                traceback.format_exc(),
+            )
             task.update_state(QueueTaskState.ERROR)
             task.error = str(exc)
             raise
@@ -173,7 +193,12 @@ class MsgQueueHandler:
             await task.complete_callback({})
 
         except Exception as exc:
-            logger.error(_("任務 %s：send_llm_msg 失敗：%s"), task.id, exc)
+            logger.error(
+                _("任務 %s：send_llm_msg 失敗：%s\n%s"),
+                task.id,
+                exc,
+                traceback.format_exc(),
+            )
             task.update_state(QueueTaskState.ERROR)
             task.error = str(exc)
             raise
