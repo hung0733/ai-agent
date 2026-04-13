@@ -7,9 +7,7 @@ Pipeline order:
   INIT
   → collect_db_data      (load agent from DB)
   → pack_sys_prompt      (assemble system prompt)
-  → pack_memory          (attach long-term memory)
   → pack_message         (finalise user message)
-  → analyse_msg_diff     (classify difficulty)
   → select_llm_model     (pick model based on difficulty)
   → send_llm_msg         (stream LLM → callback → WhatsApp)
 """
@@ -24,6 +22,7 @@ from langchain_openai import ChatOpenAI
 from pydantic import SecretStr
 
 from agent.agent import Agent
+from agent.prompt import apply_prompt_template
 from backend.utils.tools import Tools
 from i18n import _
 from msg_queue.manager import QueueManager, get_queue_manager
@@ -100,15 +99,32 @@ class MsgQueueHandler:
             raise
 
     @staticmethod
-    async def pack_memory(task: QueueTask) -> None:
-        """Attach long-term memory context to the message."""
-        logger.debug(_("任務 %s：pack_memory"), task.id)
+    async def pack_sys_prompt(task: QueueTask) -> None:
+        """建立最終 system prompt，注入 agent prompt template 與額外自訂內容。"""
+        logger.debug(_("任務 %s：pack_sys_prompt (agent=%s)"), task.id, task.agent_id)
         try:
+            if task.agent is None:
+                raise ValueError(_("Agent 未初始化 — 先執行 collect_db_data"))
 
-            task.update_state(QueueTaskState.PACKED_MEMORY)
+            task.packed_prompt = await apply_prompt_template(
+                agent_db_id=task.agent.agent_db_id,
+                agent_name=task.agent.recv_agent_name,
+            )
+
+            if task.system_prompt:
+                task.packed_prompt = f"{task.packed_prompt}\n{task.system_prompt}"
+
+            logger.debug(
+                _("任務 %s：pack_sys_prompt 完成 (agent_db_id=%s, 長度=%s)"),
+                task.id,
+                task.agent.agent_db_id,
+                len(task.packed_prompt),
+            )
+
+            task.update_state(QueueTaskState.PACKED_SYS_PROMPT)
         except Exception as exc:
             logger.error(
-                _("任務 %s：pack_memory 失敗：%s\n%s"),
+                _("任務 %s：pack_sys_prompt 失敗：%s\n%s"),
                 task.id,
                 exc,
                 traceback.format_exc(),
@@ -176,7 +192,7 @@ class MsgQueueHandler:
             task.update_state(QueueTaskState.SENDING_TO_LLM)
 
             models = task.model_set or []
-            sys_prompt = task.system_prompt or ""
+            sys_prompt = task.packed_prompt or task.system_prompt or ""
             think_mode = task.think_mode if task.think_mode is not None else False
 
             async for chunk in task.agent.send(
@@ -214,10 +230,10 @@ def register_all_handlers(qm: Optional[QueueManager] = None) -> QueueManager:
 
     qm.register_state_handler(QueueTaskState.INIT, MsgQueueHandler.collect_db_data)
     qm.register_state_handler(
-        QueueTaskState.COLLECTED_DB_DATA, MsgQueueHandler.pack_memory
+        QueueTaskState.COLLECTED_DB_DATA, MsgQueueHandler.pack_sys_prompt
     )
     qm.register_state_handler(
-        QueueTaskState.PACKED_MEMORY, MsgQueueHandler.pack_message
+        QueueTaskState.PACKED_SYS_PROMPT, MsgQueueHandler.pack_message
     )
     qm.register_state_handler(
         QueueTaskState.MESSAGES_PACKED, MsgQueueHandler.select_llm_model

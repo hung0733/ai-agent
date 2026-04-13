@@ -30,7 +30,7 @@ class QueueTaskPriority(StrEnum):
 class QueueTaskState(StrEnum):
     INIT = "init"
     COLLECTED_DB_DATA = "collected_db_data"
-    PACKED_MEMORY = "packed_memory"
+    PACKED_SYS_PROMPT = "packed_sys_prompt"
     MESSAGES_PACKED = "messages_packed"
     SELECTED_LLM_MODEL = "selected_llm_model"
     SENDING_TO_LLM = "sending_to_llm"
