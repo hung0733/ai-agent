@@ -147,6 +147,7 @@ class Agent:
                 involves_secrets=False,
                 think_mode=think_mode,
                 agent_db_id=self.agent_db_id,
+                session_db_id=self.session_db_id,
                 args=metadata,
                 sender_name=self.sender_agent_name,
                 recv_name=self.recv_agent_name,

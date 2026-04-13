@@ -148,6 +148,48 @@ def test_checkpointer_aput_persists_latest_tool_result_message() -> None:
     asyncio.run(run())
 
 
+def test_checkpointer_aput_prefers_session_db_id_from_config() -> None:
+    async def run() -> None:
+        checkpointer = ExtLanggraphCheckpointer()
+        captured: list[AgentMsgHistCreate] = []
+
+        async def fail_resolve_session_db_id(thread_id: str) -> int:
+            raise AssertionError(f"should not resolve session id for {thread_id}")
+
+        async def fake_persist_records(records: list[AgentMsgHistCreate]) -> None:
+            captured.extend(records)
+
+        checkpointer._resolve_session_db_id = fail_resolve_session_db_id  # type: ignore[attr-defined]
+        checkpointer._persist_records = fake_persist_records  # type: ignore[attr-defined]
+
+        checkpoint = {
+            "id": "checkpoint-3",
+            "channel_values": {
+                "messages": [
+                    HumanMessage(content="hi"),
+                    AIMessage(content="hello"),
+                ]
+            },
+        }
+        config = {
+            "configurable": {
+                "thread_id": "thread-3",
+                "session_db_id": 23,
+                "sender_name": "用戶",
+                "recv_name": "小丸",
+            }
+        }
+
+        await checkpointer.aput(config, checkpoint, {}, {})
+
+        assert len(captured) == 1
+        assert captured[0].session_id == 23
+        assert captured[0].thread_id == "thread-3"
+        assert captured[0].content == "hello"
+
+    asyncio.run(run())
+
+
 def test_checkpointer_aget_tuple_rebuilds_messages_from_history() -> None:
     async def run() -> None:
         checkpointer = ExtLanggraphCheckpointer()

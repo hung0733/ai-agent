@@ -68,7 +68,9 @@ class ExtLanggraphCheckpointer(BaseCheckpointSaver):
 
         latest_message = messages[-1]
         message_idx = len(messages) - 1
-        session_id = await self._resolve_session_db_id(thread_id)
+        session_id = self._get_config_optional_int(config, "session_db_id")
+        if session_id is None:
+            session_id = await self._resolve_session_db_id(thread_id)
         records = self._build_records_for_message(
             session_id=session_id,
             thread_id=thread_id,
@@ -186,6 +188,14 @@ class ExtLanggraphCheckpointer(BaseCheckpointSaver):
         configurable = config.get("configurable", {})
         value = configurable.get(key)
         return str(value) if value is not None else None
+
+    @staticmethod
+    def _get_config_optional_int(config: RunnableConfig, key: str) -> Optional[int]:
+        configurable = config.get("configurable", {})
+        value = configurable.get(key)
+        if value is None:
+            return None
+        return int(value)
 
     async def _resolve_session_db_id(self, thread_id: str) -> int:
         async with async_session_factory() as session:
