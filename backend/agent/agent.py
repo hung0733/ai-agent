@@ -28,6 +28,7 @@ class Agent:
 
     agent_db_id: int
     session_db_id: int
+    user_db_id: int
     
     agent_id: str
     session_id: str
@@ -41,7 +42,8 @@ class Agent:
     def __init__(
         self,
         agent_db_id: int,
-        session_db_id: int,   
+        session_db_id: int,
+        user_db_id: int,
         agent_id: str,
         session_id: str,
         recv_agent_name: str,
@@ -51,6 +53,7 @@ class Agent:
         self.agent_id = agent_id
         self.session_db_id = session_db_id
         self.session_id = session_id
+        self.user_db_id = user_db_id
         self.recv_agent_name = recv_agent_name
         self.sender_agent_name = sender_agent_name
 
@@ -63,11 +66,11 @@ class Agent:
     @classmethod
     async def get_db_agent(
         cls, agent_id: str, session_id: str
-    ) -> tuple[int, int, str, str, str, str]:
+    ) -> tuple[int, int, int, str, str, str, str]:
         """從數據庫獲取 agent 和 session 的資料。
 
         Returns:
-            (agent_db_id, session_db_id, agent_id, session_id, recv_agent_name, sender_agent_name)
+            (agent_db_id, session_db_id, user_db_id, agent_id, session_id, recv_agent_name, sender_agent_name)
 
         Raises:
             ValueError: 當找不到 agent 或 session 時。
@@ -110,6 +113,7 @@ class Agent:
             return (
                 agent.id,
                 session_entity.id,
+                agent.user.id,
                 agent_id,
                 session_id,
                 recv_agent_name,
@@ -118,13 +122,14 @@ class Agent:
 
     @classmethod
     async def get_agent(cls, agent_id: str, session_id: str):
-        agent_db_id, session_db_id, agent_id, session_id, recv_agent_name, sender_agent_name = await Agent.get_db_agent(agent_id, session_id)
+        agent_db_id, session_db_id, user_db_id, agent_id, session_id, recv_agent_name, sender_agent_name = await Agent.get_db_agent(agent_id, session_id)
         
         return cls(
             agent_db_id=agent_db_id,
             agent_id=agent_id,
             session_db_id=session_db_id,
             session_id=session_id,
+            user_db_id=user_db_id,
             recv_agent_name=recv_agent_name,
             sender_agent_name=sender_agent_name,
         )
@@ -148,6 +153,7 @@ class Agent:
                 think_mode=think_mode,
                 agent_db_id=self.agent_db_id,
                 session_db_id=self.session_db_id,
+                user_db_id=self.user_db_id,
                 args=metadata,
                 sender_name=self.sender_agent_name,
                 recv_name=self.recv_agent_name,

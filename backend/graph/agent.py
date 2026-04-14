@@ -5,7 +5,9 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langchain_core.language_models.chat_models import BaseChatModel
+from langgraph.prebuilt import ToolNode
 
+from backend.agent.skills import AGENT_SKILLS
 from backend.db.dto.agent_msg_hist import AgentMsgHistCreate
 
 logger = logging.getLogger(__name__)
@@ -51,7 +53,7 @@ async def chat_node(state: AgentState, config: RunnableConfig):
 
     for model in models:
         # 呼叫模型 (用 ainvoke 獲取完整回應)
-        response = await model.ainvoke(messages_to_send)
+        response = await model.bind_tools(AGENT_SKILLS).ainvoke(messages_to_send)
 
         if hasattr(response, "tool_calls") and len(response.tool_calls) > 0:
             for tc in getattr(response, "tool_calls", []):
@@ -67,13 +69,27 @@ async def chat_node(state: AgentState, config: RunnableConfig):
         return {"messages": [response]}
 
 
+# 路由判斷：模型有冇 Call Tool？
+def should_continue(state: AgentState) -> str:
+    messages = state["messages"]
+    last_message = messages[-1]
+
+    # 如果最後一個 Message 有 tool_calls，就去 "tools" node 執行
+    if hasattr(last_message, "tool_calls") and last_message.tool_calls:  # type: ignore
+        return "tools"
+    # 否則對話結束
+    return END
+
+
 # 建立藍圖 (Workflow)
 workflow = StateGraph(AgentState)
 
 workflow.add_node("chat", chat_node)
+workflow.add_node("tools", ToolNode(AGENT_SKILLS))  # LangGraph 內置的 Tool 執行節點
 
 workflow.add_edge(START, "chat")
-
-workflow.add_edge("chat", END)
+workflow.add_conditional_edges("chat", should_continue, {"tools": "tools", END: END})
+# 工具執行完畢後，一定要返去 chat_node 畀 LLM 睇執行結果
+workflow.add_edge("tools", "chat")
 
 graph = workflow.compile()

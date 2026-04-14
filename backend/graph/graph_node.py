@@ -17,6 +17,7 @@ class GraphNode:
         think_mode: Optional[bool],
         agent_db_id: int,
         session_db_id: int,
+        user_db_id: int,
         args: Optional[Dict[str, Any]] = None,
         sender_name: str = "",
         recv_name: str = "",
@@ -31,6 +32,7 @@ class GraphNode:
                 "args": args,
                 "agent_db_id": agent_db_id,
                 "session_db_id": session_db_id,
+                "user_db_id": user_db_id,
                 "sender_name": sender_name,
                 "recv_name": recv_name,
             }
