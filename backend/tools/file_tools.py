@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from i18n import _
+
 
 def get_file_tools():
     """返回 LangChain 檔案工具列表。
