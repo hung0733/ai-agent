@@ -1,16 +1,13 @@
 import logging
 from typing import Any, Dict
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langchain_core.language_models.chat_models import BaseChatModel
 from langgraph.prebuilt import ToolNode
 
-from backend.agent.skills import AGENT_SKILLS
-from backend.agent.standard_skills_processor import STANDARD_SKILL_TOOLS
-from backend.db.dto.agent_msg_hist import AgentMsgHistCreate
-
+from i18n import _
 from utils.tools import Tools
 
 logger = logging.getLogger(__name__)
@@ -29,8 +26,6 @@ async def chat_node(state: AgentState, config: RunnableConfig):
     sys_prompt: str = config["configurable"]["sys_prompt"] or ""  # type: ignore
     think_mode: bool = config["configurable"]["think_mode"]  # type: ignore
     args: Dict[str, Any] = config["configurable"]["args"]  # type: ignore
-    sender_name: str = config["configurable"]["sender_name"] or ""  # type: ignore
-    recv_name: str = config["configurable"]["recv_name"] or ""  # type: ignore
 
     messages_to_send: list[BaseMessage] = []
 
@@ -76,9 +71,7 @@ async def chat_node(state: AgentState, config: RunnableConfig):
 
     for model in models:
         # 呼叫模型 (用 ainvoke 獲取完整回應)
-        response = await model.bind_tools(STANDARD_SKILL_TOOLS).ainvoke(
-            messages_to_send
-        )
+        response = await model.ainvoke(messages_to_send)
 
         if hasattr(response, "tool_calls") and len(response.tool_calls) > 0:
             for tc in getattr(response, "tool_calls", []):
@@ -109,13 +102,61 @@ def should_continue(state: AgentState) -> str:
 workflow = StateGraph(AgentState)
 
 workflow.add_node("chat", chat_node)
-workflow.add_node(
-    "tools", ToolNode(STANDARD_SKILL_TOOLS)
-)  # LangGraph 內置的 Tool 執行節點
 
+
+async def tool_executor_node(state: AgentState, config: RunnableConfig):
+    """從 config 獲取 sandbox 並執行 tool calls。"""
+    from backend.tools import get_file_tools
+
+    messages = state["messages"]
+    last_message = messages[-1]
+
+    if not hasattr(last_message, "tool_calls") or not last_message.tool_calls:
+        return {"messages": []}
+
+    sandbox = config["configurable"].get("sandbox")
+    if sandbox is None:
+        return {"messages": [ToolMessage(
+            content=_("錯誤: Sandbox 未初始化"),
+            tool_call_id=last_message.tool_calls[0]["id"],
+        )]}
+
+    tools = get_file_tools(sandbox)
+    tool_map = {tool.name: tool for tool in tools}
+
+    results = []
+    for tc in last_message.tool_calls:
+        tool_name = tc.get("name")
+        tool_args = tc.get("args", {})
+        tool_id = tc.get("id")
+
+        if tool_name not in tool_map:
+            results.append(ToolMessage(
+                content=_("未知工具: %s").format(tool_name),
+                tool_call_id=tool_id,
+            ))
+            continue
+
+        try:
+            tool = tool_map[tool_name]
+            result = await tool.ainvoke(tool_args)
+            results.append(ToolMessage(
+                content=str(result),
+                tool_call_id=tool_id,
+            ))
+        except Exception as e:
+            logger.error(_("工具執行失敗 [%s]: %s").format(tool_name, e))
+            results.append(ToolMessage(
+                content=_("工具執行失敗: %s").format(str(e)),
+                tool_call_id=tool_id,
+            ))
+
+    return {"messages": results}
+
+
+workflow.add_node("tools", tool_executor_node)
 workflow.add_edge(START, "chat")
 workflow.add_conditional_edges("chat", should_continue, {"tools": "tools", END: END})
-# 工具執行完畢後，一定要返去 chat_node 畀 LLM 睇執行結果
 workflow.add_edge("tools", "chat")
 
 graph = workflow.compile()

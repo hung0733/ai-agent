@@ -21,6 +21,7 @@ class GraphNode:
         args: Optional[Dict[str, Any]] = None,
         sender_name: str = "",
         recv_name: str = "",
+        sandbox: Any = None,
     ) -> RunnableConfig:
         return {
             "configurable": {
@@ -35,5 +36,6 @@ class GraphNode:
                 "user_db_id": user_db_id,
                 "sender_name": sender_name,
                 "recv_name": recv_name,
+                "sandbox": sandbox,
             }
         }

@@ -17,6 +17,7 @@ from backend.graph.agent import SUMMARY_TRIGGER_TOKEN, SUMMARY_USAGE_TOKEN, work
 from backend.graph.checkpoint import ExtLanggraphCheckpointer
 from backend.graph.graph_node import GraphNode
 from backend.msg_queue.models import StreamChunk
+from backend.tools import SandboxFileSystem
 from i18n import _
 
 
@@ -157,6 +158,7 @@ class Agent:
                 args=metadata,
                 sender_name=self.sender_agent_name,
                 recv_name=self.recv_agent_name,
+                sandbox=SandboxFileSystem(agent_id=self.agent_id),
             )
 
             async for chunk in Agent._graph.astream(
