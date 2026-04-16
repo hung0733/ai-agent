@@ -1,7 +1,13 @@
+"""LangChain tool definitions for sandboxed file system operations.
+
+Wraps SandboxFileSystem methods with error handling and exposes them
+as LangChain StructuredTool instances via closure-based sandbox binding.
+"""
+
 from __future__ import annotations
 
 import logging
-from typing import List, Optional
+from typing import Optional
 
 from langchain_core.tools import StructuredTool
 
@@ -19,17 +25,17 @@ logger = logging.getLogger(__name__)
 def _handle_tool_error(func_name: str, e: Exception) -> str:
     """統一處理 tool 執行時嘅錯誤。"""
     if isinstance(e, SandboxSecurityError):
-        logger.error(_("安全錯誤 [%s]: %s") % (func_name, e))
-        return _("安全錯誤: %s") % str(e)
+        logger.error(_("安全錯誤 [{0}]: {1}").format(func_name, e))
+        return _("安全錯誤: {}").format(str(e))
     elif isinstance(e, SandboxPermissionError):
-        logger.error(_("權限錯誤 [%s]: %s") % (func_name, e))
-        return _("權限錯誤: %s") % str(e)
+        logger.error(_("權限錯誤 [{0}]: {1}").format(func_name, e))
+        return _("權限錯誤: {}").format(str(e))
     elif isinstance(e, SandboxFileNotFoundError):
-        logger.warning(_("檔案未搵到 [%s]: %s") % (func_name, e))
-        return _("檔案未搵到: %s") % str(e)
+        logger.warning(_("檔案未搵到 [{0}]: {1}").format(func_name, e))
+        return _("檔案未搵到: {}").format(str(e))
     else:
-        logger.error(_("工具執行錯誤 [%s]: %s") % (func_name, e), exc_info=True)
-        return _("執行錯誤: %s") % str(e)
+        logger.error(_("工具執行錯誤 [{0}]: {1}").format(func_name, e), exc_info=True)
+        return _("執行錯誤: {}").format(str(e))
 
 
 def get_file_tools(sandbox: SandboxFileSystem) -> list:
@@ -61,8 +67,8 @@ def get_file_tools(sandbox: SandboxFileSystem) -> list:
         try:
             entries = await sandbox.list_dir(path)
             if not entries:
-                return _("目錄為空: %s") % path
-            lines = [_("目錄內容: %s") % path]
+                return _("目錄為空: {}").format(path)
+            lines = [_("目錄內容: {}").format(path)]
             for entry in entries:
                 size_str = f"{entry['size']:,}" if entry["type"] == "file" else "-"
                 lines.append(f"  {entry['type']:9s} {size_str:>12s} {entry['name']}")
@@ -110,7 +116,7 @@ def get_file_tools(sandbox: SandboxFileSystem) -> list:
         except Exception as e:
             return _handle_tool_error("search_files", e)
 
-    async def run_script(path: str, args: Optional[List[str]] = None) -> str:
+    async def run_script(path: str, args: list[str] | None = None) -> str:
         """執行腳本。"""
         try:
             return await sandbox.run_script(path, args)
