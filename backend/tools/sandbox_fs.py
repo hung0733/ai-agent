@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 import logging
 import os
 import shutil
@@ -227,7 +228,6 @@ class SandboxFileSystem:
         content_query: str = "",
     ) -> List[Dict[str, Any]]:
         """搜尋檔案。"""
-        import fnmatch
 
         resolved = self._resolve_path(path)
         if not resolved.exists():

@@ -119,49 +119,41 @@ def get_file_tools(sandbox: SandboxFileSystem) -> list:
 
     return [
         StructuredTool.from_function(
-            func=read_file,
             coroutine=read_file,
             name="read_file",
             description=_("讀取檔案內容。路徑必須以 /mnt/user-data/ 開頭。"),
         ),
         StructuredTool.from_function(
-            func=write_file,
             coroutine=write_file,
             name="write_file",
             description=_("寫入檔案內容。/mnt/user-data/uploads 係唯讀，唔可以寫入。"),
         ),
         StructuredTool.from_function(
-            func=list_dir,
             coroutine=list_dir,
             name="list_dir",
             description=_("列出目錄內容。路徑必須以 /mnt/user-data/ 開頭。"),
         ),
         StructuredTool.from_function(
-            func=delete,
             coroutine=delete,
             name="delete",
             description=_("刪除檔案或目錄。/mnt/user-data/uploads 內嘅檔案唔可以刪除。"),
         ),
         StructuredTool.from_function(
-            func=copy_file,
             coroutine=copy_file,
             name="copy_file",
             description=_("複製檔案或目錄。"),
         ),
         StructuredTool.from_function(
-            func=move_file,
             coroutine=move_file,
             name="move_file",
             description=_("移動檔案或目錄。"),
         ),
         StructuredTool.from_function(
-            func=search_files,
             coroutine=search_files,
             name="search_files",
             description=_("搜尋檔案。可以按名稱或內容關鍵字搜尋。"),
         ),
         StructuredTool.from_function(
-            func=run_script,
             coroutine=run_script,
             name="run_script",
             description=_("執行腳本。只可以喺 /mnt/user-data/workspace 目錄執行。"),
