@@ -5,10 +5,8 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langchain_core.language_models.chat_models import BaseChatModel
-from langgraph.prebuilt import ToolNode
-
 from i18n import _
-from utils.tools import Tools
+from backend.utils.tools import Tools
 
 logger = logging.getLogger(__name__)
 
@@ -116,10 +114,13 @@ async def tool_executor_node(state: AgentState, config: RunnableConfig):
 
     sandbox = config["configurable"].get("sandbox")
     if sandbox is None:
-        return {"messages": [ToolMessage(
-            content=_("錯誤: Sandbox 未初始化"),
-            tool_call_id=last_message.tool_calls[0]["id"],
-        )]}
+        return {"messages": [
+            ToolMessage(
+                content=_("錯誤: Sandbox 未初始化"),
+                tool_call_id=tc["id"],
+            )
+            for tc in last_message.tool_calls
+        ]}
 
     tools = get_file_tools(sandbox)
     tool_map = {tool.name: tool for tool in tools}
