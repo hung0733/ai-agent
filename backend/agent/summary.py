@@ -19,21 +19,76 @@ from i18n import _
 logger = logging.getLogger(__name__)
 
 
+def select_checkpoints_for_summary(
+    records: list,
+    stm_trigger_token: int,
+    stm_summary_token: int,
+) -> tuple[list[str], list[str]]:
+    """Determine which checkpoints to keep vs. summarize.
+
+    Returns:
+        (keep_checkpoint_ids, summary_checkpoint_ids) both ordered old-to-new.
+    """
+    checkpoints: dict[str, list] = {}
+    for record in records:
+        checkpoints.setdefault(record.checkpoint_id, []).append(record)
+
+    total_token = sum(r.token for r in records)
+    if total_token <= stm_trigger_token:
+        return [], []
+
+    keep_token = stm_trigger_token - stm_summary_token
+    checkpoint_ids = list(checkpoints.keys())
+    checkpoint_ids.reverse()  # new-to-old
+
+    keep_checkpoints: list[str] = []
+    summary_checkpoints: list[str] = []
+    current_keep_token = 0
+
+    for cp_id in checkpoint_ids:
+        cp_records = checkpoints[cp_id]
+        cp_token = sum(r.token for r in cp_records)
+        if current_keep_token + cp_token <= keep_token:
+            keep_checkpoints.append(cp_id)
+            current_keep_token += cp_token
+        else:
+            summary_checkpoints.append(cp_id)
+
+    summary_checkpoints.reverse()  # old-to-new
+    return keep_checkpoints, summary_checkpoints
+
+
+def compute_truncate_count(summary_checkpoint_ids: list[str], records: list) -> int:
+    """Calculate how many messages to truncate from LangGraph state.
+
+    Uses the max message_idx from summarized checkpoints to determine
+    how many old messages can be safely removed.
+    """
+    if not summary_checkpoint_ids:
+        return 0
+
+    summary_ids = set(summary_checkpoint_ids)
+    max_idx = -1
+    for record in records:
+        if record.checkpoint_id in summary_ids:
+            if record.message_idx > max_idx:
+                max_idx = record.message_idx
+
+    # message_idx is 0-based, so truncate count = max_idx (keep messages from max_idx onward)
+    return max(0, max_idx)
+
+
 async def review_stm(
     session_db_id: int,
     model: BaseChatModel,
     stm_trigger_token: int,
     stm_summary_token: int,
     max_token: int = 30000,
-) -> None:
+) -> tuple[list[str], list[str], list] | None:
     """Review and summarize short-term memory when token threshold is exceeded.
 
-    Args:
-        session_db_id: Database ID of the session.
-        model: LLM model to use for summarization.
-        stm_trigger_token: Token threshold to trigger summarization.
-        stm_summary_token: Number of tokens to keep (not summarize).
-        max_token: Maximum tokens to summarize in a single batch.
+    Returns:
+        (keep_checkpoint_ids, summary_checkpoint_ids, records) or None if no summarization occurred.
     """
     async with async_session_factory() as session:
         hist_dao = AgentMsgHistDAO(session)
@@ -43,48 +98,20 @@ async def review_stm(
         records = await hist_dao.list_unsummarized_by_session(session_db_id)
         if not records:
             logger.debug(_("無未 summary 的記錄，session=%s"), session_db_id)
-            return
+            return None
 
-        # Step 2: 按 checkpoint 分組
+        # Step 2-4: 使用 helper 確定保留/summary 範圍
+        keep_checkpoints, summary_checkpoints = select_checkpoints_for_summary(
+            records, stm_trigger_token, stm_summary_token,
+        )
+        if not summary_checkpoints:
+            logger.debug(_("無需要 summary 的 checkpoint，session=%s"), session_db_id)
+            return None
+
+        # 重建 checkpoints dict 供分批處理使用
         checkpoints: dict[str, list] = {}
         for record in records:
             checkpoints.setdefault(record.checkpoint_id, []).append(record)
-
-        # Step 3: 計算總 token
-        total_token = sum(r.token for r in records)
-        if total_token <= stm_trigger_token:
-            logger.debug(
-                _("總 token (%s) 未超過閾值 (%s)，session=%s"),
-                total_token,
-                stm_trigger_token,
-                session_db_id,
-            )
-            return
-
-        # Step 4: 確定保留範圍（最新 stm_trigger_token - stm_summary_token token）
-        keep_token = stm_trigger_token - stm_summary_token
-        checkpoint_ids = list(checkpoints.keys())  # 已按 create_dt 排序
-        checkpoint_ids.reverse()  # 由新到舊
-
-        keep_checkpoints: list[str] = []
-        summary_checkpoints: list[str] = []
-        current_keep_token = 0
-
-        for cp_id in checkpoint_ids:
-            cp_records = checkpoints[cp_id]
-            cp_token = sum(r.token for r in cp_records)
-            if current_keep_token + cp_token <= keep_token:
-                keep_checkpoints.append(cp_id)
-                current_keep_token += cp_token
-            else:
-                summary_checkpoints.append(cp_id)
-
-        # summary_checkpoints 是由新到舊，反轉回由舊到新
-        summary_checkpoints.reverse()
-
-        if not summary_checkpoints:
-            logger.debug(_("無需要 summary 的 checkpoint，session=%s"), session_db_id)
-            return
 
         # Step 5: 分批 summary
         await _process_summary_batches(
@@ -98,6 +125,8 @@ async def review_stm(
         )
 
         await session.commit()
+
+        return keep_checkpoints, summary_checkpoints, records
 
 
 async def _process_summary_batches(

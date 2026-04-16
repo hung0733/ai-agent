@@ -159,6 +159,8 @@ class Agent:
                 sender_name=self.sender_agent_name,
                 recv_name=self.recv_agent_name,
                 sandbox=SandboxFileSystem(agent_id=self.agent_id),
+                stm_trigger_token=self.stm_trigger_token,
+                stm_summary_token=self.stm_summary_token,
             )
 
             async for chunk in Agent._graph.astream(

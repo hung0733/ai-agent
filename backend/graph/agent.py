@@ -7,6 +7,7 @@ from langgraph.graph import END, START, MessagesState, StateGraph
 from langchain_core.language_models.chat_models import BaseChatModel
 from i18n import _
 from backend.utils.tools import Tools
+from backend.agent.summary import review_stm, compute_truncate_count
 
 logger = logging.getLogger(__name__)
 
@@ -155,9 +156,57 @@ async def tool_executor_node(state: AgentState, config: RunnableConfig):
     return {"messages": results}
 
 
+async def review_stm_node(state: AgentState, config: RunnableConfig):
+    """Review STM and truncate old messages after tool execution.
+
+    This runs after tools node to prevent context window explosion
+    during tool call loops.
+    """
+    session_db_id = config["configurable"].get("session_db_id")
+    models: list[BaseChatModel] = config["configurable"].get("models", [])
+    stm_trigger_token = config["configurable"].get("stm_trigger_token", SUMMARY_TRIGGER_TOKEN)
+    stm_summary_token = config["configurable"].get("stm_summary_token", SUMMARY_USAGE_TOKEN)
+
+    if session_db_id is None or not models:
+        logger.warning(_("review_stm_node 缺少必要參數，跳過"))
+        return {}
+
+    result = await review_stm(
+        session_db_id=session_db_id,
+        model=models[0],
+        stm_trigger_token=stm_trigger_token,
+        stm_summary_token=stm_summary_token,
+    )
+
+    if result is None:
+        return {}
+
+    keep_checkpoints, summary_checkpoints, records = result
+    truncate_count = compute_truncate_count(summary_checkpoints, records)
+
+    if truncate_count <= 0:
+        return {}
+
+    messages = state["messages"]
+    if len(messages) <= truncate_count:
+        logger.warning(_("state 消息數量不足以截斷，跳過"))
+        return {}
+
+    kept_messages = messages[truncate_count:]
+    logger.info(
+        _("review_stm_node 截斷 %s 條舊消息，保留 %s 條"),
+        truncate_count,
+        len(kept_messages),
+    )
+
+    return {"messages": kept_messages}
+
+
 workflow.add_node("tools", tool_executor_node)
+workflow.add_node("review_stm", review_stm_node)
 workflow.add_edge(START, "chat")
 workflow.add_conditional_edges("chat", should_continue, {"tools": "tools", END: END})
-workflow.add_edge("tools", "chat")
+workflow.add_edge("tools", "review_stm")
+workflow.add_edge("review_stm", "chat")
 
 graph = workflow.compile()

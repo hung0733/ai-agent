@@ -33,6 +33,76 @@ def test_format_conversation() -> None:
     assert result == expected
 
 
+def test_select_checkpoints_below_threshold() -> None:
+    """測試總 token 未超過閾值時返回空列表。"""
+    from agent.summary import select_checkpoints_for_summary
+
+    records = [
+        SimpleNamespace(token=100, checkpoint_id="cp1"),
+        SimpleNamespace(token=200, checkpoint_id="cp2"),
+    ]
+
+    keep, summary = select_checkpoints_for_summary(records, 10000, 5000)
+    assert keep == []
+    assert summary == []
+
+
+def test_select_checkpoints_triggers_summary() -> None:
+    """測試超過閾值時正確分組 checkpoint。"""
+    from agent.summary import select_checkpoints_for_summary
+
+    records = [
+        SimpleNamespace(token=6000, checkpoint_id="cp1"),
+        SimpleNamespace(token=6000, checkpoint_id="cp2"),
+    ]
+
+    keep, summary = select_checkpoints_for_summary(records, 10000, 5000)
+    # keep_token = 10000 - 5000 = 5000, so neither checkpoint fits in keep
+    assert len(summary) == 2
+    assert "cp1" in summary
+    assert "cp2" in summary
+
+
+def test_compute_truncate_count_empty() -> None:
+    """測試無 summary checkpoint 時返回 0。"""
+    from agent.summary import compute_truncate_count
+
+    result = compute_truncate_count([], [])
+    assert result == 0
+
+
+def test_compute_truncate_count_basic() -> None:
+    """測試基本截斷計數計算。"""
+    from agent.summary import compute_truncate_count
+
+    records = [
+        SimpleNamespace(checkpoint_id="cp1", message_idx=0),
+        SimpleNamespace(checkpoint_id="cp1", message_idx=1),
+        SimpleNamespace(checkpoint_id="cp2", message_idx=2),
+        SimpleNamespace(checkpoint_id="cp2", message_idx=3),
+    ]
+
+    result = compute_truncate_count(["cp1"], records)
+    # max message_idx for cp1 is 1, so truncate count = 1
+    assert result == 1
+
+
+def test_compute_truncate_count_multiple_checkpoints() -> None:
+    """測試多個 summary checkpoint 時取最大 message_idx。"""
+    from agent.summary import compute_truncate_count
+
+    records = [
+        SimpleNamespace(checkpoint_id="cp1", message_idx=0),
+        SimpleNamespace(checkpoint_id="cp2", message_idx=3),
+        SimpleNamespace(checkpoint_id="cp1", message_idx=1),
+        SimpleNamespace(checkpoint_id="cp2", message_idx=4),
+    ]
+
+    result = compute_truncate_count(["cp1", "cp2"], records)
+    # max message_idx across cp1 and cp2 is 4
+    assert result == 4
+
+
 @pytest.mark.asyncio
 async def test_review_stm_no_records(monkeypatch: pytest.MonkeyPatch) -> None:
     """測試無未 summary 記錄時直接返回。"""

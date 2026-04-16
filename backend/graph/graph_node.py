@@ -22,6 +22,8 @@ class GraphNode:
         sender_name: str = "",
         recv_name: str = "",
         sandbox: Any = None,
+        stm_trigger_token: int = 10000,
+        stm_summary_token: int = 5000,
     ) -> RunnableConfig:
         return {
             "configurable": {
@@ -37,5 +39,7 @@ class GraphNode:
                 "sender_name": sender_name,
                 "recv_name": recv_name,
                 "sandbox": sandbox,
+                "stm_trigger_token": stm_trigger_token,
+                "stm_summary_token": stm_summary_token,
             }
         }
