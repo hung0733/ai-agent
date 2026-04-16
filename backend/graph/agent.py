@@ -8,7 +8,10 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langgraph.prebuilt import ToolNode
 
 from backend.agent.skills import AGENT_SKILLS
+from backend.agent.standard_skills_processor import STANDARD_SKILL_TOOLS
 from backend.db.dto.agent_msg_hist import AgentMsgHistCreate
+
+from utils.tools import Tools
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +37,9 @@ async def chat_node(state: AgentState, config: RunnableConfig):
     # 只有非 backend 任務先入 system prompt
     if sys_prompt:
         messages_to_send.append(SystemMessage(content=sys_prompt))
-        logger.debug(f"📝 已加入 System Prompt (長度：{len(sys_prompt)})")
+        logger.debug(
+            f"📝 已加入 System Prompt (長度：{len(sys_prompt)}, Token: {Tools.get_token_count(sys_prompt)})"
+        )
 
     summary = state.get("summary", "")
     if summary:
@@ -44,16 +49,36 @@ async def chat_node(state: AgentState, config: RunnableConfig):
             )
         )
 
-    messages_to_send += state["messages"]
     last_message: BaseMessage = state["messages"][-1]
+    message: BaseMessage
+    msg_count: int = 0
+    msg_token: int = 0
+    msg_len: int = 0
+
+    for message in state["messages"]:
+        messages_to_send.append(message)
+        last_message = message
+        msg_count += 1
+        msg_token += Tools.get_token_count(message.content)
+        msg_len += len(message.content)
+
+    msg_count -= 1
+    msg_token -= Tools.get_token_count(last_message.content)
+    msg_len -= len(last_message.content)
 
     logger.info(
-        f"💬 Send Message, Length: {len(last_message.content)}, {last_message.content}"
+        f"💬 Message History, Count: {msg_count}, Length: {msg_len}, Token: {msg_token}"
     )
+    logger.info(
+        f"💬 Send Message, Length: {len(last_message.content)}, Token: {Tools.get_token_count(last_message.content)}"
+    )
+    logger.debug(f"💬 Send Message: {last_message.content}")
 
     for model in models:
         # 呼叫模型 (用 ainvoke 獲取完整回應)
-        response = await model.bind_tools(AGENT_SKILLS).ainvoke(messages_to_send)
+        response = await model.bind_tools(STANDARD_SKILL_TOOLS).ainvoke(
+            messages_to_send
+        )
 
         if hasattr(response, "tool_calls") and len(response.tool_calls) > 0:
             for tc in getattr(response, "tool_calls", []):
@@ -61,9 +86,8 @@ async def chat_node(state: AgentState, config: RunnableConfig):
                     f"🔧 收到工具調用：{tc.get('name')}, 📥 傳入參數: {tc.get('args')}"
                 )
         else:
-            logger.info(
-                f"💬 收到內容，長度：{len(response.content)}, {response.content}"
-            )
+            logger.info(f"💬 收到內容，長度：{len(response.content)}")
+            logger.debug(f"💬 收到內容：{response.content}")
 
         # 返回最新嘅 AIMessage，LangGraph 會自動 append 落 State 度
         return {"messages": [response]}
@@ -85,7 +109,9 @@ def should_continue(state: AgentState) -> str:
 workflow = StateGraph(AgentState)
 
 workflow.add_node("chat", chat_node)
-workflow.add_node("tools", ToolNode(AGENT_SKILLS))  # LangGraph 內置的 Tool 執行節點
+workflow.add_node(
+    "tools", ToolNode(STANDARD_SKILL_TOOLS)
+)  # LangGraph 內置的 Tool 執行節點
 
 workflow.add_edge(START, "chat")
 workflow.add_conditional_edges("chat", should_continue, {"tools": "tools", END: END})

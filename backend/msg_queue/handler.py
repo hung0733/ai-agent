@@ -106,13 +106,13 @@ class MsgQueueHandler:
             if task.agent is None:
                 raise ValueError(_("Agent 未初始化 — 先執行 collect_db_data"))
 
-            task.packed_prompt = await apply_prompt_template(
-                agent_db_id=task.agent.agent_db_id,
-                agent_name=task.agent.recv_agent_name,
-            )
-
             if task.system_prompt:
-                task.packed_prompt = f"{task.packed_prompt}\n{task.system_prompt}"
+                task.packed_prompt = task.system_prompt
+            else:
+                task.packed_prompt = await apply_prompt_template(
+                    agent_db_id=task.agent.agent_db_id,
+                    agent_name=task.agent.recv_agent_name,
+                )
 
             logger.debug(
                 _("任務 %s：pack_sys_prompt 完成 (agent_db_id=%s, 長度=%s)"),
@@ -195,6 +195,11 @@ class MsgQueueHandler:
             sys_prompt = task.packed_prompt or task.system_prompt or ""
             think_mode = task.think_mode if task.think_mode is not None else False
 
+            chunk: StreamChunk
+            chunk_type: str = ""
+            content: str = ""
+            tool_args: str = ""
+
             async for chunk in task.agent.send(
                 models=models,
                 sys_prompt=sys_prompt,
@@ -202,6 +207,20 @@ class MsgQueueHandler:
                 think_mode=think_mode,
                 metadata=task.metadata,
             ):
+                cur_chunk_type: str = chunk.chunk_type
+                if chunk_type != cur_chunk_type:
+                    if len(chunk_type) > 0:
+                        logger.debug(f"Chunk Type: {chunk_type}")
+                    chunk_type = cur_chunk_type
+                    content = ""
+                    tool_args = ""
+
+                content += chunk.content or ""
+                if chunk_type == "tool" and chunk.data is not None:
+                    tool_call_data = chunk.data.get("tool_call")
+                    if tool_call_data is not None:
+                        tool_args += tool_call_data
+
                 task.update_state(QueueTaskState.RECEIVING_STREAM)
                 await task.stream_callback(chunk)
 
