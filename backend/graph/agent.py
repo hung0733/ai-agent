@@ -38,7 +38,7 @@ async def chat_node(state: AgentState, config: RunnableConfig):
     if summary:
         messages_to_send.append(
             AIMessage(
-                content=f"以下是過去對話的重點總結，請作為背景記憶參考：\n{summary}"
+                content=_("以下是過去對話的重點總結，請作為背景記憶參考：\n{}").format(summary)
             )
         )
 
@@ -133,7 +133,7 @@ async def tool_executor_node(state: AgentState, config: RunnableConfig):
 
         if tool_name not in tool_map:
             results.append(ToolMessage(
-                content=_("未知工具: %s").format(tool_name),
+                content=_("未知工具: {}").format(tool_name),
                 tool_call_id=tool_id,
             ))
             continue
@@ -146,9 +146,9 @@ async def tool_executor_node(state: AgentState, config: RunnableConfig):
                 tool_call_id=tool_id,
             ))
         except Exception as e:
-            logger.error(_("工具執行失敗 [%s]: %s").format(tool_name, e))
+            logger.error(_("工具執行失敗 [%s]: %s") % (tool_name, e))
             results.append(ToolMessage(
-                content=_("工具執行失敗: %s").format(str(e)),
+                content=_("工具執行失敗: {}").format(str(e)),
                 tool_call_id=tool_id,
             ))
 
