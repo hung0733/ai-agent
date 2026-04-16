@@ -23,6 +23,7 @@ from pydantic import SecretStr
 
 from agent.agent import Agent
 from agent.prompt import apply_prompt_template
+from backend.agent.summary import review_stm
 from backend.utils.tools import Tools
 from i18n import _
 from msg_queue.manager import QueueManager, get_queue_manager
@@ -226,6 +227,8 @@ class MsgQueueHandler:
 
             task.update_state(QueueTaskState.STREAMING_TO_CLIENT)
             await task.complete_callback({})
+            
+            Tools.start_async_task(review_stm(task.agent.session_db_id, models[0], task.agent.stm_trigger_token, task.agent.stm_summary_token))
 
         except Exception as exc:
             logger.error(

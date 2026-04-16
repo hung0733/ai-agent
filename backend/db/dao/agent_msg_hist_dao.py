@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from db.dao.base import BaseDAO
 from db.dto.agent_msg_hist import AgentMsgHistCreate
@@ -93,3 +93,24 @@ class AgentMsgHistDAO(BaseDAO[AgentMsgHistEntity]):
         """從 DTO 創建訊息記錄。"""
         entity = AgentMsgHistEntity(**dto.model_dump())
         return await self.create(entity)
+
+    async def list_unsummarized_by_session(self, session_id: int) -> list[AgentMsgHistEntity]:
+        """獲取 session 中所有 is_stm_summary=False 的記錄（按 create_dt 排序）。"""
+        stmt = (
+            select(AgentMsgHistEntity)
+            .where(AgentMsgHistEntity.session_id == session_id)
+            .where(AgentMsgHistEntity.is_stm_summary == False)  # noqa: E712
+            .order_by(AgentMsgHistEntity.create_dt, AgentMsgHistEntity.message_idx, AgentMsgHistEntity.id)
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def mark_checkpoint_as_summarized(self, checkpoint_id: str, session_id: int) -> None:
+        """將指定 checkpoint 的所有記錄標記為 is_stm_summary=True。"""
+        stmt = (
+            update(AgentMsgHistEntity)
+            .where(AgentMsgHistEntity.session_id == session_id)
+            .where(AgentMsgHistEntity.checkpoint_id == checkpoint_id)
+            .values(is_stm_summary=True)
+        )
+        await self._session.execute(stmt)
