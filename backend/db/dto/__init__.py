@@ -10,6 +10,7 @@ from db.dto.llm_endpoint import LlmEndpointCreate, LlmEndpointUpdate, LlmEndpoin
 from db.dto.llm_level import LlmLevelCreate, LlmLevelUpdate, LlmLevelResponse
 from db.dto.agent_msg_hist import AgentMsgHistCreate, AgentMsgHistResponse
 from db.dto.task import TaskCreate, TaskUpdate, TaskResponse
+from db.dto.schedule import ScheduleCreate, ScheduleUpdate, ScheduleResponse
 from db.dto.memory import (
     ShortTermMemCreate,
     ShortTermMemResponse,
@@ -30,6 +31,7 @@ __all__ = [
     "LlmLevelCreate", "LlmLevelUpdate", "LlmLevelResponse",
     "AgentMsgHistCreate", "AgentMsgHistResponse",
     "TaskCreate", "TaskUpdate", "TaskResponse",
+    "ScheduleCreate", "ScheduleUpdate", "ScheduleResponse",
     "ShortTermMemCreate", "ShortTermMemResponse",
     "LongTermMemCreate", "LongTermMemResponse",
     "MemoryBlockCreate", "MemoryBlockUpdate", "MemoryBlockResponse",
