@@ -30,3 +30,29 @@ class ShortTermMemDAO(BaseDAO[ShortTermMemEntity]):
         """從 DTO 創建短期記憶。"""
         entity = ShortTermMemEntity(**dto.model_dump())
         return await self.create(entity)
+
+    async def list_recent_by_token_limit(
+        self, session_id: int, max_token: int = 10000
+    ) -> list[ShortTermMemEntity]:
+        """按 session_id 獲取最近的不超過 max_token 的短期記憶。
+
+        返回按 create_dt 正序（舊到新）排列的記錄。
+        """
+        stmt = (
+            select(ShortTermMemEntity)
+            .where(ShortTermMemEntity.session_id == session_id)
+            .order_by(ShortTermMemEntity.create_dt.desc())
+        )
+        result = await self._session.execute(stmt)
+        all_records = list(result.scalars().all())
+
+        selected: list[ShortTermMemEntity] = []
+        current_token = 0
+        for record in all_records:
+            if current_token + record.token > max_token and selected:
+                break
+            selected.append(record)
+            current_token += record.token
+
+        selected.reverse()
+        return selected

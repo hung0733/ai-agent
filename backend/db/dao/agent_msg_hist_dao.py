@@ -67,6 +67,21 @@ class AgentMsgHistDAO(BaseDAO[AgentMsgHistEntity]):
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
+    async def list_by_thread_unsummarized(self, thread_id: str) -> list[AgentMsgHistEntity]:
+        """根據 thread_id 讀取未 summary 的訊息歷史（排除 is_stm_summary=True）。"""
+        stmt = (
+            select(AgentMsgHistEntity)
+            .where(AgentMsgHistEntity.thread_id == thread_id)
+            .where(AgentMsgHistEntity.is_stm_summary == False)  # noqa: E712
+            .order_by(
+                AgentMsgHistEntity.create_dt,
+                AgentMsgHistEntity.message_idx,
+                AgentMsgHistEntity.id,
+            )
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
     async def exists_message(
         self,
         session_id: int,
@@ -122,6 +137,28 @@ class AgentMsgHistDAO(BaseDAO[AgentMsgHistEntity]):
             update(AgentMsgHistEntity)
             .where(AgentMsgHistEntity.session_id == session_id)
             .where(AgentMsgHistEntity.checkpoint_id == checkpoint_id)
+            .values(is_stm_summary=True)
+        )
+        await self._session.execute(stmt)
+
+    async def mark_records_as_summarized(
+        self,
+        record_ids: list[int],
+        session_id: int,
+    ) -> None:
+        """按記錄 ID 列表標記為 is_stm_summary=True。
+
+        Args:
+            record_ids: 記錄 ID 列表。
+            session_id: Session ID。
+        """
+        if not record_ids:
+            return
+
+        stmt = (
+            update(AgentMsgHistEntity)
+            .where(AgentMsgHistEntity.session_id == session_id)
+            .where(AgentMsgHistEntity.id.in_(record_ids))
             .values(is_stm_summary=True)
         )
         await self._session.execute(stmt)

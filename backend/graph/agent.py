@@ -7,7 +7,7 @@ from langgraph.graph import END, START, MessagesState, StateGraph
 from langchain_core.language_models.chat_models import BaseChatModel
 from i18n import _
 from backend.utils.tools import Tools
-from backend.agent.summary import review_stm, compute_truncate_count
+from backend.agent.summary import review_stm
 
 logger = logging.getLogger(__name__)
 
@@ -35,13 +35,23 @@ async def chat_node(state: AgentState, config: RunnableConfig):
             f"📝 已加入 System Prompt (長度：{len(sys_prompt)}, Token: {Tools.get_token_count(sys_prompt)})"
         )
 
-    summary = state.get("summary", "")
-    if summary:
-        messages_to_send.append(
-            AIMessage(
-                content=_("以下是過去對話的重點總結，請作為背景記憶參考：\n{}").format(summary)
+    session_db_id = config["configurable"].get("session_db_id")
+    if session_db_id is not None:
+        from db.config import async_session_factory
+        from db.dao.short_term_mem_dao import ShortTermMemDAO
+
+        async with async_session_factory() as db_session:
+            mem_dao = ShortTermMemDAO(db_session)
+            memories = await mem_dao.list_recent_by_token_limit(
+                session_db_id, max_token=10000
             )
-        )
+            if memories:
+                summary_content = "\n".join(m.content for m in memories)
+                messages_to_send.append(
+                    AIMessage(
+                        content=_("以下是過去對話的重點總結，請作為背景記憶參考：\n{}").format(summary_content)
+                    )
+                )
 
     last_message: BaseMessage = state["messages"][-1]
     message: BaseMessage
@@ -193,8 +203,7 @@ async def review_stm_node(state: AgentState, config: RunnableConfig):
     if result is None:
         return {}
 
-    keep_checkpoints, summary_checkpoints, records = result
-    truncate_count = compute_truncate_count(summary_checkpoints, records)
+    truncate_count, summary_groups, records = result
 
     if truncate_count <= 0:
         return {}

@@ -136,17 +136,17 @@ LTM_PROMPT_TEMPLATE = """[角色設定]
 
 [輸出 JSON 格式要求]
 你必須輸出一個 JSON Object，包含一個名為 "memories" 的陣列 (Array)。陣列內每個物件代表一條獨立的記憶：
-{
+{{
   "memories": [
-    {
+    {{
       "domain_wing": "Project_JARVIS",
       "topic_room": "Database",
       "lossless_restatement": "User fixed a concurrency bug in the connection pool logic.",
       "keywords": ["Bug fix", "Concurrency", "Connection pool"],
       "record_dt": "2026-04-14T11:15:00"
-    }
+    }}
   ]
-}"""
+}}"""
 
 STM_PROMPT_TEMPLATE = """[角色設定]
 你是「深層記憶合成大師」。
@@ -164,18 +164,19 @@ STM_PROMPT_TEMPLATE = """[角色設定]
    - ✅ 正確寫法："User implemented async database fetching logic for users on 2026-04-14."
 
 [用戶對話紀錄 Transcript]
+以下係 JSON 格式嘅對話記錄：
 {converstion}
 
 [輸出 JSON 格式要求]
 你必須輸出一個 JSON Object，包含一個名為 "memories" 的陣列 (Array)。陣列內每個物件代表一條獨立的記憶：
-{
+{{
   "memories": [
-    {
+    {{
       "lossless_restatement": "User fixed a concurrency bug in the connection pool logic.",  
       "record_dt": "2026-04-14T11:15:00"
-    }
+    }}
   ]
-}"""
+}}"""
 
 
 async def apply_stm_prompt_template(converstion: str):

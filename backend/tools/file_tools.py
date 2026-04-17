@@ -7,7 +7,7 @@ as LangChain StructuredTool instances via closure-based sandbox binding.
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import List, Optional
 
 from langchain_core.tools import StructuredTool
 
@@ -116,7 +116,7 @@ def get_file_tools(sandbox: SandboxFileSystem) -> list:
         except Exception as e:
             return _handle_tool_error("search_files", e)
 
-    async def run_script(path: str, args: list[str] | None = None) -> str:
+    async def run_script(path: str, args: Optional[List[str]] = None) -> str:
         """執行腳本。"""
         try:
             return await sandbox.run_script(path, args)

@@ -366,7 +366,7 @@ class ExtLanggraphCheckpointer(BaseCheckpointSaver):
             target_checkpoint_id = checkpoint_id or await dao.get_latest_checkpoint_id(thread_id)
             if not target_checkpoint_id:
                 return None, -2, []
-            entities = await dao.list_by_thread(thread_id)
+            entities = await dao.list_by_thread_unsummarized(thread_id)
             payloads = [json.loads(entity.payload_json) for entity in entities]
             unique_payloads: list[dict[str, Any]] = []
             seen_payloads: set[str] = set()
