@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
@@ -26,8 +26,8 @@ class TaskEntity(Base):
     execution_order: Mapped[Optional[int]] = mapped_column(Integer)
     required_skill: Mapped[Optional[str]] = mapped_column(String(100))
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
-    parameters: Mapped[Optional[dict]] = mapped_column(JSONB)
-    return_message: Mapped[Optional[dict]] = mapped_column(JSONB)
+    parameters: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB)
+    return_message: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB)
     error_message: Mapped[Optional[str]] = mapped_column(Text)
     retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     next_process_dt: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
@@ -37,4 +37,5 @@ class TaskEntity(Base):
     # Relationships
     agent: Mapped["AgentEntity"] = relationship("AgentEntity", back_populates="tasks")
     schedule: Mapped[Optional["ScheduleEntity"]] = relationship("ScheduleEntity", back_populates="task", uselist=False)
-    parent_task: Mapped[Optional["TaskEntity"]] = relationship("TaskEntity", remote_side=[id], backref="sub_tasks")
+    sub_tasks: Mapped[list["TaskEntity"]] = relationship("TaskEntity", back_populates="parent_task")
+    parent_task: Mapped[Optional["TaskEntity"]] = relationship("TaskEntity", remote_side=[id], back_populates="sub_tasks")
