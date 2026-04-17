@@ -80,7 +80,7 @@ def _merge_and_deduplicate(
 
     for results in [semantic_results, keyword_results, structured_results]:
         for point in results:
-            point_id = point.id if hasattr(point, "id") else point.payload.get("id")
+            point_id = getattr(point, "id", None) or (getattr(point, "payload", None) or {}).get("id")
             if point_id not in seen_ids:
                 seen_ids.add(point_id)
                 merged.append(point)
@@ -112,6 +112,6 @@ def format_ltm_results(points: List[Any]) -> str:
             f"{i}. [{wing}/{room}] {content}"
         )
         if keywords:
-            lines.append(f"   Keywords: {', '.join(keywords)}")
+            lines.append(_("   Keywords: %s") % ', '.join(keywords))
 
     return "\n".join(lines)

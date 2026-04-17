@@ -22,6 +22,10 @@ SUMMARY_TRIGGER_TOKEN: int = 10000
 SUMMARY_USAGE_TOKEN: int = 5000
 
 
+class AgentState(MessagesState):
+    summary: str
+
+
 def _get_embedding_model():
     """獲取 embedding 模型。"""
     from langchain_openai import OpenAIEmbeddings
@@ -47,7 +51,9 @@ async def chat_node(state: AgentState, config: RunnableConfig):
     if sys_prompt:
         messages_to_send.append(SystemMessage(content=sys_prompt))
         logger.debug(
-            f"📝 已加入 System Prompt (長度：{len(sys_prompt)}, Token: {Tools.get_token_count(sys_prompt)})"
+            _("已加入 System Prompt (長度：%s, Token: %s)"),
+            len(sys_prompt),
+            Tools.get_token_count(sys_prompt),
         )
 
     session_db_id = config["configurable"].get("session_db_id")  # type: ignore
@@ -121,12 +127,17 @@ async def chat_node(state: AgentState, config: RunnableConfig):
     msg_len -= len(last_message.content)
 
     logger.info(
-        f"💬 Message History, Count: {msg_count}, Length: {msg_len}, Token: {msg_token}"
+        _("Message History, Count: %s, Length: %s, Token: %s"),
+        msg_count,
+        msg_len,
+        msg_token,
     )
     logger.info(
-        f"💬 Send Message, Length: {len(last_message.content)}, Token: {Tools.get_token_count(last_message.content)}"
+        _("Send Message, Length: %s, Token: %s"),
+        len(last_message.content),
+        Tools.get_token_count(last_message.content),
     )
-    logger.debug(f"💬 Send Message: {last_message.content}")
+    logger.debug(_("Send Message: %s"), last_message.content)
 
     # 綁定 file system tools 到 model
     sandbox = config["configurable"].get("sandbox")  # type: ignore
