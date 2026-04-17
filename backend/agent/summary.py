@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from datetime import datetime, timezone
 
 from langchain_core.language_models import BaseChatModel
@@ -131,6 +132,7 @@ async def review_ltm(agent_id: int) -> dict:
 
     processed_count = 0
     error_count = 0
+    processed_ids: list[int] = []
 
     async with async_session_factory() as session:
         hist_dao = AgentMsgHistDAO(session)
@@ -166,6 +168,7 @@ async def review_ltm(agent_id: int) -> dict:
                     )
                     if success:
                         processed_count += len(batch)
+                        processed_ids.extend([r.id for r in batch])
                     else:
                         error_count += len(batch)
 
@@ -174,10 +177,8 @@ async def review_ltm(agent_id: int) -> dict:
                 error_count += len(group_records)
 
         # Step 5: 標記已處理的記錄
-        if processed_count > 0:
-            await hist_dao.mark_records_as_ltm_summarized(
-                [r.id for r in records[:processed_count]]
-            )
+        if processed_ids:
+            await hist_dao.mark_records_as_ltm_summarized(processed_ids)
 
         await session.commit()
 

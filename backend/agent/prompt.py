@@ -200,8 +200,6 @@ async def apply_ltm_prompt_template(
     Returns:
         格式化後的 prompt
     """
-    from backend.agent.prompt import LTM_PROMPT_TEMPLATE
-
     return LTM_PROMPT_TEMPLATE.format(
         converstion=conversation,
         existing_taxonomy_json=existing_taxonomy_json,
