@@ -1,7 +1,13 @@
 import logging
 from typing import Any, Dict
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -35,7 +41,7 @@ async def chat_node(state: AgentState, config: RunnableConfig):
             f"📝 已加入 System Prompt (長度：{len(sys_prompt)}, Token: {Tools.get_token_count(sys_prompt)})"
         )
 
-    session_db_id = config["configurable"].get("session_db_id")
+    session_db_id = config["configurable"].get("session_db_id")  # type: ignore
     if session_db_id is not None:
         from db.config import async_session_factory
         from db.dao.short_term_mem_dao import ShortTermMemDAO
@@ -49,7 +55,9 @@ async def chat_node(state: AgentState, config: RunnableConfig):
                 summary_content = "\n".join(m.content for m in memories)
                 messages_to_send.append(
                     AIMessage(
-                        content=_("以下是過去對話的重點總結，請作為背景記憶參考：\n{}").format(summary_content)
+                        content=_(
+                            "以下是過去對話的重點總結，請作為背景記憶參考：\n{}"
+                        ).format(summary_content)
                     )
                 )
 
@@ -79,10 +87,11 @@ async def chat_node(state: AgentState, config: RunnableConfig):
     logger.debug(f"💬 Send Message: {last_message.content}")
 
     # 綁定 file system tools 到 model
-    sandbox = config["configurable"].get("sandbox") # type: ignore
+    sandbox = config["configurable"].get("sandbox")  # type: ignore
     model_to_use = models[0]
     if sandbox is not None:
         from backend.tools import get_file_tools
+
         file_tools = get_file_tools(sandbox)
         model_to_use = model_to_use.bind_tools(file_tools)
 
@@ -97,7 +106,8 @@ async def chat_node(state: AgentState, config: RunnableConfig):
                 for k, v in args.items()
             }
             logger.info(
-                _("🔧 收到工具調用：%s, 📥 傳入參數: %s") % (tc.get("name"), truncated_args)
+                _("🔧 收到工具調用：%s, 📥 傳入參數: %s")
+                % (tc.get("name"), truncated_args)
             )
     else:
         logger.info(_("💬 收到內容，長度：%s") % len(response.content))
@@ -132,48 +142,56 @@ async def tool_executor_node(state: AgentState, config: RunnableConfig):
     messages = state["messages"]
     last_message = messages[-1]
 
-    if not hasattr(last_message, "tool_calls") or not last_message.tool_calls:
+    if not hasattr(last_message, "tool_calls") or not last_message.tool_calls:  # type: ignore
         return {"messages": []}
 
-    sandbox = config["configurable"].get("sandbox")
+    sandbox = config["configurable"].get("sandbox")  # type: ignore
     if sandbox is None:
-        return {"messages": [
-            ToolMessage(
-                content=_("錯誤: Sandbox 未初始化"),
-                tool_call_id=tc["id"],
-            )
-            for tc in last_message.tool_calls
-        ]}
+        return {
+            "messages": [
+                ToolMessage(
+                    content=_("錯誤: Sandbox 未初始化"),
+                    tool_call_id=tc["id"],
+                )
+                for tc in last_message.tool_calls  # type: ignore
+            ]
+        }
 
     tools = get_file_tools(sandbox)
     tool_map = {tool.name: tool for tool in tools}
 
     results = []
-    for tc in last_message.tool_calls:
+    for tc in last_message.tool_calls:  # type: ignore
         tool_name = tc.get("name")
         tool_args = tc.get("args", {})
         tool_id = tc.get("id")
 
         if tool_name not in tool_map:
-            results.append(ToolMessage(
-                content=_("未知工具: {}").format(tool_name),
-                tool_call_id=tool_id,
-            ))
+            results.append(
+                ToolMessage(
+                    content=_("未知工具: {}").format(tool_name),
+                    tool_call_id=tool_id,
+                )
+            )
             continue
 
         try:
             tool = tool_map[tool_name]
             result = await tool.ainvoke(tool_args)
-            results.append(ToolMessage(
-                content=str(result),
-                tool_call_id=tool_id,
-            ))
+            results.append(
+                ToolMessage(
+                    content=str(result),
+                    tool_call_id=tool_id,
+                )
+            )
         except Exception as e:
             logger.error(_("工具執行失敗 [%s]: %s") % (tool_name, e))
-            results.append(ToolMessage(
-                content=_("工具執行失敗: {}").format(str(e)),
-                tool_call_id=tool_id,
-            ))
+            results.append(
+                ToolMessage(
+                    content=_("工具執行失敗: {}").format(str(e)),
+                    tool_call_id=tool_id,
+                )
+            )
 
     return {"messages": results}
 
@@ -184,10 +202,10 @@ async def review_stm_node(state: AgentState, config: RunnableConfig):
     This runs after tools node to prevent context window explosion
     during tool call loops.
     """
-    session_db_id = config["configurable"].get("session_db_id")
-    models: list[BaseChatModel] = config["configurable"].get("models", [])
-    stm_trigger_token = config["configurable"].get("stm_trigger_token", SUMMARY_TRIGGER_TOKEN)
-    stm_summary_token = config["configurable"].get("stm_summary_token", SUMMARY_USAGE_TOKEN)
+    session_db_id = config["configurable"].get("session_db_id")  # type: ignore
+    models: list[BaseChatModel] = config["configurable"].get("models", [])  # type: ignore
+    stm_trigger_token = config["configurable"].get("stm_trigger_token", SUMMARY_TRIGGER_TOKEN)  # type: ignore
+    stm_summary_token = config["configurable"].get("stm_summary_token", SUMMARY_USAGE_TOKEN)  # type: ignore
 
     if session_db_id is None or not models:
         logger.warning(_("review_stm_node 缺少必要參數，跳過"))
