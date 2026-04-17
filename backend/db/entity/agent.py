@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from db.entity.task import TaskEntity
 
 from sqlalchemy import BigInteger, Boolean, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -32,3 +35,4 @@ class AgentEntity(Base):
     )
     long_term_mems: Mapped[list["LongTermMemEntity"]] = relationship("LongTermMemEntity", back_populates="agent")
     memory_blocks: Mapped[list["MemoryBlockEntity"]] = relationship("MemoryBlockEntity", back_populates="agent")
+    tasks: Mapped[list["TaskEntity"]] = relationship("TaskEntity", back_populates="agent")

@@ -13,6 +13,7 @@ from db.entity.short_term_mem import ShortTermMemEntity
 from db.entity.long_term_mem import LongTermMemEntity
 from db.entity.memory_block import MemoryBlockEntity
 from db.entity.task import TaskEntity
+from db.entity.schedule import ScheduleEntity
 
 __all__ = [
     "UserEntity",
@@ -26,4 +27,5 @@ __all__ = [
     "LongTermMemEntity",
     "MemoryBlockEntity",
     "TaskEntity",
+    "ScheduleEntity",
 ]
