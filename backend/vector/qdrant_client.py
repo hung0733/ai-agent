@@ -34,7 +34,9 @@ class QdrantClient:
         self.host = host or os.getenv("QDRANT_HOST", "localhost")
         self.port = port or int(os.getenv("QDRANT_PORT", "6333"))
         self.api_key = api_key or os.getenv("QDRANT_API_KEY")
-        self.collection_name = collection_name or os.getenv("QDRANT_LTM_COLLECTION", "simplemem_memories")
+        self.collection_name = collection_name or os.getenv(
+            "QDRANT_LTM_COLLECTION", "simplemem_memories",
+        )
 
         self.client = AsyncQdrantClient(
             host=self.host,
@@ -45,22 +47,35 @@ class QdrantClient:
     async def ensure_collection(self, vector_size: int = 2560) -> None:
         """確保集合存在，不存在則創建。
 
+        同時確保 keyword 索引存在。
+
         Args:
             vector_size: 向量維度
         """
-        collections = await self.client.get_collections()
-        collection_names = [c.name for c in collections.collections]
+        try:
+            collections = await self.client.get_collections()
+            collection_names = [c.name for c in collections.collections]
 
-        if self.collection_name not in collection_names:
-            logger.info(_("創建 Qdrant 集合：%s"), self.collection_name)
-            await self.client.create_collection(
-                collection_name=self.collection_name,
-                vectors_config=models.VectorParams(
-                    size=vector_size,
-                    distance=models.Distance.COSINE,
-                ),
-            )
-            # 創建 keyword 索引用於 BM25 搜索
+            if self.collection_name not in collection_names:
+                logger.info(_("創建 Qdrant 集合：%s"), self.collection_name)
+                await self.client.create_collection(
+                    collection_name=self.collection_name,
+                    vectors_config=models.VectorParams(
+                        size=vector_size,
+                        distance=models.Distance.COSINE,
+                    ),
+                )
+
+            # 創建 keyword 索引用於 BM25 搜索（獨立於集合創建）
+            await self._ensure_keyword_index()
+
+        except Exception as exc:
+            logger.error(_("確保 Qdrant 集合失敗：%s"), exc)
+            raise
+
+    async def _ensure_keyword_index(self) -> None:
+        """確保 keyword 文本索引存在。"""
+        try:
             await self.client.create_payload_index(
                 collection_name=self.collection_name,
                 field_name="keywords",
@@ -72,6 +87,9 @@ class QdrantClient:
                     lowercase=True,
                 ),
             )
+        except Exception as exc:
+            # 索引可能已存在，忽略錯誤
+            logger.debug(_("創建 keyword 索引時出錯（可能已存在）：%s"), exc)
 
     async def upsert_points(self, points: List[Dict[str, Any]]) -> Dict[str, Any]:
         """寫入向量點。
@@ -81,6 +99,9 @@ class QdrantClient:
 
         Returns:
             操作結果
+
+        Raises:
+            RuntimeError: 當 upsert 操作失敗時
         """
         qdrant_points = []
         for point in points:
@@ -92,10 +113,22 @@ class QdrantClient:
                 )
             )
 
-        result = await self.client.upsert(
-            collection_name=self.collection_name,
-            points=qdrant_points,
-        )
+        try:
+            result = await self.client.upsert(
+                collection_name=self.collection_name,
+                points=qdrant_points,
+            )
+        except Exception as exc:
+            logger.error(_("Qdrant upsert 失敗：%s"), exc)
+            raise
+
+        if result.status != models.UpdateStatus.COMPLETED:
+            error_msg = _("Qdrant upsert 失敗：狀態=%s") % getattr(
+                result, "status", "unknown",
+            )
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
+
         logger.info(_("寫入 %s 個向量點到 Qdrant"), len(points))
         return {"status": "ok", "count": len(points)}
 
@@ -126,12 +159,16 @@ class QdrantClient:
                 ]
             )
 
-        results = await self.client.query_points(
-            collection_name=self.collection_name,
-            query=query_vector,
-            query_filter=query_filter,
-            limit=top_k,
-        )
+        try:
+            results = await self.client.query_points(
+                collection_name=self.collection_name,
+                query=query_vector,
+                query_filter=query_filter,
+                limit=top_k,
+            )
+        except Exception as exc:
+            logger.error(_("Qdrant 語義搜索失敗：%s"), exc)
+            raise
         return results.points
 
     async def search_keyword(
@@ -166,11 +203,15 @@ class QdrantClient:
                 )
             )
 
-        results = await self.client.query_points(
-            collection_name=self.collection_name,
-            query_filter=query_filter,
-            limit=top_k,
-        )
+        try:
+            results = await self.client.query_points(
+                collection_name=self.collection_name,
+                query_filter=query_filter,
+                limit=top_k,
+            )
+        except Exception as exc:
+            logger.error(_("Qdrant 關鍵字搜索失敗：%s"), exc)
+            raise
         return results.points
 
     async def search_structured(
@@ -189,7 +230,7 @@ class QdrantClient:
             top_k: 返回結果數量
 
         Returns:
-            搜索結果列表
+            搜索結果列表。若未提供任何過濾條件則返回空列表。
         """
         conditions = []
         if wing is not None:
@@ -219,9 +260,13 @@ class QdrantClient:
 
         query_filter = models.Filter(must=conditions)
 
-        results = await self.client.query_points(
-            collection_name=self.collection_name,
-            query_filter=query_filter,
-            limit=top_k,
-        )
+        try:
+            results = await self.client.query_points(
+                collection_name=self.collection_name,
+                query_filter=query_filter,
+                limit=top_k,
+            )
+        except Exception as exc:
+            logger.error(_("Qdrant 结构化搜索失敗：%s"), exc)
+            raise
         return results.points
