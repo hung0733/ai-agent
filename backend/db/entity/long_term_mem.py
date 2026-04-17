@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Text
+from sqlalchemy import BigInteger, DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from db.base import Base
@@ -17,6 +17,8 @@ class LongTermMemEntity(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     agent_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("agent.id"), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    wing: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    room: Mapped[str | None] = mapped_column(String(80), nullable=True)
     create_dt: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     token: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
 

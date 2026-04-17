@@ -37,6 +37,8 @@ class ShortTermMemResponse(BaseModel):
 class LongTermMemCreate(BaseModel):
     agent_id: int
     content: str
+    wing: str | None = None
+    room: str | None = None
     create_dt: datetime
     token: int = 0
 
@@ -45,6 +47,8 @@ class LongTermMemResponse(BaseModel):
     id: int
     agent_id: int
     content: str
+    wing: str | None = None
+    room: str | None = None
     create_dt: datetime
     token: int
 
@@ -54,6 +58,8 @@ class LongTermMemResponse(BaseModel):
             id=entity.id,
             agent_id=entity.agent_id,
             content=entity.content,
+            wing=entity.wing,
+            room=entity.room,
             create_dt=entity.create_dt,
             token=entity.token,
         )
