@@ -21,6 +21,7 @@ class AgentEntity(Base):
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("user_acc.id"), nullable=False)
     agent_id: Mapped[str] = mapped_column(String(200), unique=True, nullable=False)
     name: Mapped[str] = mapped_column(String(80), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="idle")
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     llm_group_id: Mapped[Optional[int]] = mapped_column(BigInteger, ForeignKey("llm_group.id"))
 
