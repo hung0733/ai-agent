@@ -12,24 +12,33 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "backend"))
 
 
 @pytest.fixture
-def mock_qdrant_client():
-    """Mock Qdrant client."""
-    with patch("backend.vector.qdrant_client.QdrantClient") as mock:
-        yield mock
+def mock_async_qdrant_client():
+    """Mock the underlying AsyncQdrantClient class."""
+    with patch("backend.vector.qdrant_client.AsyncQdrantClient") as mock:
+        mock_instance = AsyncMock()
+        mock.return_value = mock_instance
+        yield mock, mock_instance
 
 
-def test_qdrant_client_initialization():
+def test_qdrant_client_initialization(mock_async_qdrant_client):
     """測試 QdrantClient 初始化。"""
     from backend.vector.qdrant_client import QdrantClient
-    import os
+
+    mock_cls, mock_instance = mock_async_qdrant_client
 
     client = QdrantClient(
-        host=os.getenv("QDRANT_HOST", "localhost"),
-        port=int(os.getenv("QDRANT_PORT", "6333")),
-        api_key=os.getenv("QDRANT_API_KEY"),
+        host="test-host",
+        port=6334,
+        api_key="test-key",
+        collection_name="test_collection",
     )
-    assert client.host == os.getenv("QDRANT_HOST", "localhost")
-    assert client.port == int(os.getenv("QDRANT_PORT", "6333"))
+
+    assert client.host == "test-host"
+    assert client.port == 6334
+    assert client.api_key == "test-key"
+    assert client.collection_name == "test_collection"
+
+    mock_cls.assert_called_once_with(host="test-host", port=6334, api_key="test-key")
 
 
 @pytest.mark.asyncio
