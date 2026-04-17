@@ -220,7 +220,10 @@ class MsgQueueHandler:
                 if chunk_type == "tool" and chunk.data is not None:
                     tool_call_data = chunk.data.get("tool_call")
                     if tool_call_data is not None:
-                        tool_args += tool_call_data
+                        if isinstance(tool_call_data, dict):
+                            tool_args = str(tool_call_data)
+                        else:
+                            tool_args += str(tool_call_data)
 
                 task.update_state(QueueTaskState.RECEIVING_STREAM)
                 await task.stream_callback(chunk)
