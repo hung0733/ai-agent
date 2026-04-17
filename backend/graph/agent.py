@@ -69,7 +69,7 @@ async def chat_node(state: AgentState, config: RunnableConfig):
     logger.debug(f"💬 Send Message: {last_message.content}")
 
     # 綁定 file system tools 到 model
-    sandbox = config["configurable"].get("sandbox")
+    sandbox = config["configurable"].get("sandbox") # type: ignore
     model_to_use = models[0]
     if sandbox is not None:
         from backend.tools import get_file_tools
@@ -81,8 +81,11 @@ async def chat_node(state: AgentState, config: RunnableConfig):
 
     if hasattr(response, "tool_calls") and len(response.tool_calls) > 0:
         for tc in getattr(response, "tool_calls", []):
+            args_str = str(tc.get("args", {}))
+            if len(args_str) > 100:
+                args_str = args_str[:100] + "..."
             logger.info(
-                _("🔧 收到工具調用：%s, 📥 傳入參數: %s") % (tc.get("name"), tc.get("args"))
+                _("🔧 收到工具調用：%s, 📥 傳入參數: %s") % (tc.get("name"), args_str)
             )
     else:
         logger.info(_("💬 收到內容，長度：%s") % len(response.content))
