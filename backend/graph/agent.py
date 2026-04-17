@@ -1,4 +1,5 @@
 import logging
+import os
 from typing import Any, Dict
 
 from langchain_core.messages import (
@@ -21,8 +22,16 @@ SUMMARY_TRIGGER_TOKEN: int = 10000
 SUMMARY_USAGE_TOKEN: int = 5000
 
 
-class AgentState(MessagesState):
-    summary: str
+def _get_embedding_model():
+    """獲取 embedding 模型。"""
+    from langchain_openai import OpenAIEmbeddings
+
+    return OpenAIEmbeddings(
+        openai_api_base=os.getenv("EMBEDDING_LLM_ENDPOINT"),
+        openai_api_key=os.getenv("EMBEDDING_LLM_API_KEY", ""),
+        model=os.getenv("EMBEDDING_LLM_MODEL", "text-embedding-3-small"),
+        dimensions=int(os.getenv("EMBEDDING_DIMENSION", "2560")),
+    )
 
 
 async def chat_node(state: AgentState, config: RunnableConfig):
@@ -61,7 +70,40 @@ async def chat_node(state: AgentState, config: RunnableConfig):
                     )
                 )
 
+    # LTM Search - 每次 human message 都檢索
     last_message: BaseMessage = state["messages"][-1]
+    if session_db_id is not None and isinstance(last_message, HumanMessage):
+        try:
+            from backend.agent.ltm_search import search_ltm
+            from backend.vector.qdrant_client import QdrantClient
+            from db.dao.session_dao import SessionDAO
+
+            async with async_session_factory() as db_session:
+                session_dao = SessionDAO(db_session)
+                session = await session_dao.get_by_id(session_db_id)
+                if session:
+                    agent_id = session.recv_agent_id
+
+                    qdrant_client = QdrantClient()
+                    await qdrant_client.ensure_collection(
+                        vector_size=int(os.getenv("EMBEDDING_DIMENSION", "2560"))
+                    )
+
+                    embedding_model = _get_embedding_model()
+                    query_embedding = await embedding_model.aembed_query(last_message.content)
+
+                    ltm_context = await search_ltm(
+                        query=last_message.content,
+                        agent_id=agent_id,
+                        qdrant_client=qdrant_client,
+                        query_vector=query_embedding,
+                    )
+
+                    if ltm_context:
+                        messages_to_send.append(AIMessage(content=ltm_context))
+        except Exception as exc:
+            logger.warning(_("LTM 檢索失敗，跳過：%s"), exc)
+
     message: BaseMessage
     msg_count: int = 0
     msg_token: int = 0
