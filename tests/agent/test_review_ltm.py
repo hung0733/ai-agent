@@ -35,7 +35,7 @@ async def test_review_ltm_no_records(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(summary, "async_session_factory", FakeSessionContext)
     monkeypatch.setattr(summary, "AgentMsgHistDAO", FakeHistDAO)
 
-    result = await summary.review_ltm(agent_id=1)
+    result = await summary.review_ltm(agent_id=1, model=MagicMock())
     assert result == {"processed": 0, "errors": 0}
 
 
@@ -134,7 +134,7 @@ async def test_review_ltm_marks_correct_ids_on_success(monkeypatch: pytest.Monke
     monkeypatch.setattr(summary, "QdrantClient", FakeQdrantClient)
     monkeypatch.setattr(summary, "_process_ltm_batch", fake_process_ltm_batch)
 
-    result = await summary.review_ltm(agent_id=1)
+    result = await summary.review_ltm(agent_id=1, model=MagicMock())
 
     assert result["processed"] == 3
     assert result["errors"] == 0
@@ -185,7 +185,7 @@ async def test_review_ltm_error_handling(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(summary, "QdrantClient", FakeQdrantClient)
     monkeypatch.setattr(summary, "_process_ltm_batch", fake_process_ltm_batch)
 
-    result = await summary.review_ltm(agent_id=1)
+    result = await summary.review_ltm(agent_id=1, model=MagicMock())
 
     assert result["processed"] == 0
     assert result["errors"] == 2
@@ -240,7 +240,7 @@ async def test_review_ltm_partial_success(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(summary, "QdrantClient", FakeQdrantClient)
     monkeypatch.setattr(summary, "_process_ltm_batch", fake_process_ltm_batch)
 
-    result = await summary.review_ltm(agent_id=1)
+    result = await summary.review_ltm(agent_id=1, model=MagicMock())
 
     assert result["processed"] == 2
     assert result["errors"] == 1

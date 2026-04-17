@@ -116,7 +116,7 @@ def compute_truncate_count(summary_groups: list[list]) -> int:
 
     return max(0, max_idx)
 
-async def review_ltm(agent_id: int) -> dict:
+async def review_ltm(agent_id: int, model: BaseChatModel) -> dict:
     """Review and summarize long-term memory.
 
     查詢未總結的記錄，按 session_id + date 分組，
@@ -124,6 +124,7 @@ async def review_ltm(agent_id: int) -> dict:
 
     Args:
         agent_id: Agent ID
+        model: LLM model for generating memories
 
     Returns:
         {"processed": int, "errors": int}
@@ -165,6 +166,7 @@ async def review_ltm(agent_id: int) -> dict:
                         batch_records=batch,
                         ltm_dao=ltm_dao,
                         qdrant_client=qdrant_client,
+                        model=model,
                     )
                     if success:
                         processed_count += len(batch)
@@ -242,6 +244,7 @@ async def _process_ltm_batch(
     batch_records: list,
     ltm_dao: LongTermMemDAO,
     qdrant_client: QdrantClient,
+    model: BaseChatModel,
 ) -> bool:
     """處理單個 LTM 批次。
 
@@ -250,23 +253,120 @@ async def _process_ltm_batch(
         batch_records: 記錄批次
         ltm_dao: LTM DAO
         qdrant_client: Qdrant 客戶端
+        model: LLM model for generating memories
 
     Returns:
         是否成功
     """
     try:
-        # 格式化對話
-        conversation = _format_conversation(batch_records)
+        total_token = sum(getattr(r, "token", 0) for r in batch_records)
+        logger.info(
+            _("LTM 批次處理開始 - agent=%s, 記錄數=%s, 總 token=%s"),
+            agent_id,
+            len(batch_records),
+            total_token,
+        )
 
-        # 生成 prompt
+        for i, record in enumerate(batch_records):
+            content_preview = (record.content[:100] + "...") if record.content and len(record.content) > 100 else record.content
+            logger.debug(
+                _("記錄 [%s/%s] - id=%s, msg_type=%s, sender=%s, token=%s, content=%s"),
+                i + 1,
+                len(batch_records),
+                getattr(record, "id", "N/A"),
+                getattr(record, "msg_type", "N/A"),
+                getattr(record, "sender", "N/A"),
+                getattr(record, "token", 0),
+                content_preview,
+            )
+
+        conversation = _format_conversation(batch_records)
+        logger.info(_("格式化後嘅對話內容:\n%s"), conversation)
+
         prompt = await apply_ltm_prompt_template(conversation)
 
-        # 由於 review_ltm 是獨立函數（不在 LangGraph node 中），
-        # 需要調用者提供 model。但為了保持接口簡單，這裡使用一個默認模型。
-        # 實際使用時需要補充完整的 LLM 調用邏輯。
+        response = await model.ainvoke(prompt)
+        content = response.content.strip()
 
-        logger.warning(_("LTM batch 處理需要 LLM 模型，請在調用時配置模型參數"))
-        return False
+        if content.startswith("```"):
+            content = content.split("\n", 1)[-1] if "\n" in content else content[3:]
+            if content.endswith("```"):
+                content = content[:-3]
+            content = content.strip()
+
+        logger.debug(_("LLM 返回內容:\n%s"), content[:500])
+
+        try:
+            data = json.loads(content)
+        except json.JSONDecodeError as e:
+            logger.error(_("LLM 返回的 JSON 格式錯誤: %s — %s"), content[:200], e)
+            return False
+
+        memories = data.get("memories", [])
+        if not memories:
+            logger.debug(_("LLM 未返回任何 memories"))
+            return False
+
+        from langchain_openai import OpenAIEmbeddings
+
+        embedding_model = OpenAIEmbeddings(
+            openai_api_base=os.getenv("EMBEDDING_LLM_ENDPOINT"),
+            openai_api_key=os.getenv("EMBEDDING_LLM_API_KEY", ""),
+            model=os.getenv("EMBEDDING_LLM_MODEL", "text-embedding-3-small"),
+            dimensions=int(os.getenv("EMBEDDING_DIMENSION", "2560")),
+        )
+
+        now = datetime.now(timezone.utc)
+        qdrant_points = []
+
+        for memory in memories:
+            restatement = memory.get("lossless_restatement", "")
+            if not restatement:
+                continue
+
+            wing = memory.get("domain_wing")
+            room = memory.get("topic_room")
+            keywords = memory.get("keywords", [])
+
+            record_dt_str = memory.get("record_dt")
+            if record_dt_str:
+                try:
+                    record_dt = datetime.fromisoformat(record_dt_str)
+                except (ValueError, TypeError):
+                    record_dt = now
+            else:
+                record_dt = now
+
+            token = Tools.get_token_count(restatement)
+            dto = LongTermMemCreate(
+                agent_id=agent_id,
+                content=restatement,
+                wing=wing,
+                room=room,
+                create_dt=record_dt,
+                token=token,
+            )
+            await ltm_dao.create_from_dto(dto)
+
+            embedding = await embedding_model.aembed_query(restatement)
+            qdrant_points.append({
+                "id": f"ltm_{agent_id}_{record_dt.isoformat()}_{Tools.get_token_count(restatement)}",
+                "vector": embedding,
+                "payload": {
+                    "agent_id": agent_id,
+                    "content": restatement,
+                    "wing": wing,
+                    "room": room,
+                    "keywords": keywords,
+                    "record_dt": record_dt.isoformat(),
+                },
+            })
+
+        if qdrant_points:
+            await qdrant_client.upsert_points(qdrant_points)
+
+        logger.info(_("已寫入 %s 條 long-term memories"), len(memories))
+        return True
 
     except Exception as exc:
         logger.error(_("LTM 批次處理失敗：%s"), exc)
