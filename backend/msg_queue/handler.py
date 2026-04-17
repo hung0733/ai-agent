@@ -15,6 +15,7 @@ Pipeline order:
 from __future__ import annotations
 
 import logging
+import time
 import traceback
 from typing import Any, AsyncGenerator, Dict, Optional
 
@@ -199,7 +200,7 @@ class MsgQueueHandler:
             chunk: StreamChunk
             chunk_type: str = ""
             content: str = ""
-            tool_args: str = ""
+            tool_args: dict = {}
 
             async for chunk in task.agent.send(
                 models=models,
@@ -211,27 +212,73 @@ class MsgQueueHandler:
                 cur_chunk_type: str = chunk.chunk_type
                 if chunk_type != cur_chunk_type:
                     if len(chunk_type) > 0:
-                        logger.debug(f"Chunk Type: {chunk_type}")
+                        if chunk_type == "tool":
+                            await task.stream_callback(
+                                StreamChunk(
+                                    chunk_type="content",
+                                    content=f"\n\n> 🛠️ **正在調用工具**：`{content}`\n> 📥 **傳入參數**：`{tool_args}`\n",
+                                    timestamp=time.time(),
+                                )
+                            )
+                        elif chunk_type == "tool_result":
+                            _newline = "\n"
+                            _newline_indent = "\n> "
+                            await task.stream_callback(
+                                StreamChunk(
+                                    chunk_type="content",
+                                    content=f"\n> 📤 **工具返回結果**：\n>`{content.replace(_newline, _newline_indent)}`\n\n",
+                                    timestamp=time.time(),
+                                )
+                            )
                     chunk_type = cur_chunk_type
                     content = ""
-                    tool_args = ""
+                    tool_args = {}
 
                 content += chunk.content or ""
                 if chunk_type == "tool" and chunk.data is not None:
                     tool_call_data = chunk.data.get("tool_call")
                     if tool_call_data is not None:
-                        if isinstance(tool_call_data, dict):
-                            tool_args = str(tool_call_data)
-                        else:
-                            tool_args += str(tool_call_data)
+                        for k, v in tool_call_data.items():
+                            if v:
+                                # 只有 args 需要拼接，其他字段直接賦值
+                                if k == "args":
+                                    tool_args[k] = tool_args.get(k, "") + v
+                                elif k not in tool_args:
+                                    tool_args[k] = v
 
                 task.update_state(QueueTaskState.RECEIVING_STREAM)
                 await task.stream_callback(chunk)
 
+            if chunk_type == "tool":
+                await task.stream_callback(
+                    StreamChunk(
+                        chunk_type="content",
+                        content=f"\n\n> 🛠️ **正在調用工具**：`{content}`\n> 📥 **傳入參數**：`{tool_args}`\n",
+                        timestamp=time.time(),
+                    )
+                )
+            elif chunk_type == "tool_result":
+                _newline = "\n"
+                _newline_indent = "\n> "
+                await task.stream_callback(
+                    StreamChunk(
+                        chunk_type="content",
+                        content=f"\n> 📤 **工具返回結果**：\n>`{content.replace(_newline, _newline_indent)}`\n\n",
+                        timestamp=time.time(),
+                    )
+                )
+
             task.update_state(QueueTaskState.STREAMING_TO_CLIENT)
             await task.complete_callback({})
-            
-            Tools.start_async_task(review_stm(task.agent.session_db_id, models[0], task.agent.stm_trigger_token, task.agent.stm_summary_token))
+
+            Tools.start_async_task(
+                review_stm(
+                    task.agent.session_db_id,
+                    models[0],
+                    task.agent.stm_trigger_token,
+                    task.agent.stm_summary_token,
+                )
+            )
 
         except Exception as exc:
             logger.error(

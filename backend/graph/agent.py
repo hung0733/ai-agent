@@ -81,11 +81,13 @@ async def chat_node(state: AgentState, config: RunnableConfig):
 
     if hasattr(response, "tool_calls") and len(response.tool_calls) > 0:
         for tc in getattr(response, "tool_calls", []):
-            args_str = str(tc.get("args", {}))
-            if len(args_str) > 100:
-                args_str = args_str[:100] + "..."
+            args = tc.get("args", {})
+            truncated_args = {
+                k: (v[:100] + "..." if isinstance(v, str) and len(v) > 100 else v)
+                for k, v in args.items()
+            }
             logger.info(
-                _("🔧 收到工具調用：%s, 📥 傳入參數: %s") % (tc.get("name"), args_str)
+                _("🔧 收到工具調用：%s, 📥 傳入參數: %s") % (tc.get("name"), truncated_args)
             )
     else:
         logger.info(_("💬 收到內容，長度：%s") % len(response.content))
