@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from sqlalchemy import select, update
+from typing import Optional
 
 from db.dao.base import BaseDAO
 from db.dto.agent_msg_hist import AgentMsgHistCreate
@@ -74,18 +75,28 @@ class AgentMsgHistDAO(BaseDAO[AgentMsgHistEntity]):
         msg_type: str,
         sender: str,
         content: str,
+        tool_call_id: Optional[str] = None,
     ) -> bool:
-        """檢查訊息記錄是否已存在。"""
+        """檢查訊息記錄是否已存在。
+
+        對於 tool_result 類型，用 tool_call_id 去重（每個 tool_call 只對應一個 result）。
+        其他類型用 checkpoint_id + content 去重。
+        """
         stmt = (
             select(AgentMsgHistEntity.id)
             .where(AgentMsgHistEntity.session_id == session_id)
-            .where(AgentMsgHistEntity.checkpoint_id == checkpoint_id)
             .where(AgentMsgHistEntity.message_idx == message_idx)
             .where(AgentMsgHistEntity.msg_type == msg_type)
             .where(AgentMsgHistEntity.sender == sender)
-            .where(AgentMsgHistEntity.content == content)
-            .limit(1)
         )
+
+        if msg_type == "tool_result" and tool_call_id:
+            stmt = stmt.where(AgentMsgHistEntity.tool_call_id == tool_call_id)
+        else:
+            stmt = stmt.where(AgentMsgHistEntity.checkpoint_id == checkpoint_id)
+            stmt = stmt.where(AgentMsgHistEntity.content == content)
+
+        stmt = stmt.limit(1)
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none() is not None
 

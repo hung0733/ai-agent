@@ -348,6 +348,7 @@ class ExtLanggraphCheckpointer(BaseCheckpointSaver):
                     msg_type=record.msg_type,
                     sender=record.sender,
                     content=record.content,
+                    tool_call_id=record.tool_call_id,
                 )
                 if exists:
                     continue
