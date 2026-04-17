@@ -162,3 +162,33 @@ class AgentMsgHistDAO(BaseDAO[AgentMsgHistEntity]):
             .values(is_stm_summary=True)
         )
         await self._session.execute(stmt)
+
+    async def list_unsummarized_for_ltm(self) -> list[AgentMsgHistEntity]:
+        """列出所有 is_ltm_summary=False 的記錄。
+
+        Returns:
+            未總結的記錄列表
+        """
+        stmt = (
+            select(AgentMsgHistEntity)
+            .where(AgentMsgHistEntity.is_ltm_summary == False)  # noqa: E712
+            .order_by(AgentMsgHistEntity.session_id, AgentMsgHistEntity.create_dt)
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def mark_records_as_ltm_summarized(self, record_ids: list[int]) -> None:
+        """標記記錄為已 LTM 總結。
+
+        Args:
+            record_ids: 記錄 ID 列表
+        """
+        if not record_ids:
+            return
+
+        stmt = (
+            update(AgentMsgHistEntity)
+            .where(AgentMsgHistEntity.id.in_(record_ids))
+            .values(is_ltm_summary=True)
+        )
+        await self._session.execute(stmt)

@@ -132,7 +132,8 @@ LTM_PROMPT_TEMPLATE = """[角色設定]
    - ✅ 正確寫法："User implemented async database fetching logic for users on 2026-04-14."
 
 [用戶對話紀錄 Transcript]
-{batched_conversation_transcript}
+以下係 JSON 格式嘅對話記錄：
+{converstion}
 
 [輸出 JSON 格式要求]
 你必須輸出一個 JSON Object，包含一個名為 "memories" 的陣列 (Array)。陣列內每個物件代表一條獨立的記憶：
@@ -182,5 +183,27 @@ STM_PROMPT_TEMPLATE = """[角色設定]
 async def apply_stm_prompt_template(converstion: str):
     return STM_PROMPT_TEMPLATE.format(
         converstion=converstion,
+        current_timestamp=datetime.now().strftime("%Y-%m-%d %H:%M"),
+    )
+
+
+async def apply_ltm_prompt_template(
+    conversation: str,
+    existing_taxonomy_json: str = "{}",
+) -> str:
+    """應用 LTM prompt template。
+
+    Args:
+        conversation: 對話內容
+        existing_taxonomy_json: 現有的 wing/room 分類 JSON
+
+    Returns:
+        格式化後的 prompt
+    """
+    from backend.agent.prompt import LTM_PROMPT_TEMPLATE
+
+    return LTM_PROMPT_TEMPLATE.format(
+        converstion=conversation,
+        existing_taxonomy_json=existing_taxonomy_json,
         current_timestamp=datetime.now().strftime("%Y-%m-%d %H:%M"),
     )

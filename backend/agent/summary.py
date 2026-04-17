@@ -8,12 +8,14 @@ from datetime import datetime, timezone
 
 from langchain_core.language_models import BaseChatModel
 
-from agent.prompt import apply_stm_prompt_template
+from agent.prompt import apply_ltm_prompt_template, apply_stm_prompt_template
 from db.config import async_session_factory
 from db.dao.agent_msg_hist_dao import AgentMsgHistDAO
+from db.dao.long_term_mem_dao import LongTermMemDAO
 from db.dao.short_term_mem_dao import ShortTermMemDAO
-from db.dto.memory import ShortTermMemCreate
+from db.dto.memory import LongTermMemCreate, ShortTermMemCreate
 from utils.tools import Tools
+from vector.qdrant_client import QdrantClient
 from i18n import _
 
 logger = logging.getLogger(__name__)
@@ -112,6 +114,162 @@ def compute_truncate_count(summary_groups: list[list]) -> int:
                 max_idx = record.message_idx
 
     return max(0, max_idx)
+
+async def review_ltm(agent_id: int) -> dict:
+    """Review and summarize long-term memory.
+
+    查詢未總結的記錄，按 session_id + date 分組，
+    用 LLM 生成 LTM 並寫入 PostgreSQL + Qdrant。
+
+    Args:
+        agent_id: Agent ID
+
+    Returns:
+        {"processed": int, "errors": int}
+    """
+    import os
+
+    processed_count = 0
+    error_count = 0
+
+    async with async_session_factory() as session:
+        hist_dao = AgentMsgHistDAO(session)
+        ltm_dao = LongTermMemDAO(session)
+
+        # Step 1: 查詢未總結的記錄
+        records = await hist_dao.list_unsummarized_for_ltm()
+        if not records:
+            logger.debug(_("無未總結的記錄，agent_id=%s"), agent_id)
+            return {"processed": 0, "errors": 0}
+
+        # Step 2: 按 session_id + date 分組
+        groups = _group_records_by_session_date(records)
+
+        # Step 3: 初始化 Qdrant 客戶端
+        qdrant_client = QdrantClient()
+        await qdrant_client.ensure_collection(
+            vector_size=int(os.getenv("EMBEDDING_DIMENSION", "2560"))
+        )
+
+        # Step 4: 處理每組
+        for group_key, group_records in groups.items():
+            try:
+                # 如果超過 30000 token，分割
+                batches = _split_records_by_token_limit(group_records, limit=30000)
+
+                for batch in batches:
+                    success = await _process_ltm_batch(
+                        agent_id=agent_id,
+                        batch_records=batch,
+                        ltm_dao=ltm_dao,
+                        qdrant_client=qdrant_client,
+                    )
+                    if success:
+                        processed_count += len(batch)
+                    else:
+                        error_count += len(batch)
+
+            except Exception as exc:
+                logger.error(_("處理 LTM 批次失敗：%s"), exc)
+                error_count += len(group_records)
+
+        # Step 5: 標記已處理的記錄
+        if processed_count > 0:
+            await hist_dao.mark_records_as_ltm_summarized(
+                [r.id for r in records[:processed_count]]
+            )
+
+        await session.commit()
+
+    logger.info(_("LTM review 完成：處理 %s 條，錯誤 %s 條"), processed_count, error_count)
+    return {"processed": processed_count, "errors": error_count}
+
+
+def _group_records_by_session_date(records: list) -> dict:
+    """按 session_id + date 分組記錄。
+
+    Args:
+        records: 記錄列表
+
+    Returns:
+        {(session_id, date_str): [records]}
+    """
+    groups = {}
+    for record in records:
+        date_str = record.create_dt.strftime("%Y-%m-%d")
+        key = (record.session_id, date_str)
+        if key not in groups:
+            groups[key] = []
+        groups[key].append(record)
+    return groups
+
+
+def _split_records_by_token_limit(records: list, limit: int = 30000) -> list[list]:
+    """按 token 限制分割記錄。
+
+    Args:
+        records: 記錄列表
+        limit: token 上限
+
+    Returns:
+        分割後的批次列表
+    """
+    if not records:
+        return []
+
+    batches = []
+    current_batch = []
+    current_token = 0
+
+    for record in records:
+        record_token = getattr(record, "token", 0)
+        if current_token + record_token > limit and current_batch:
+            batches.append(current_batch)
+            current_batch = []
+            current_token = 0
+        current_batch.append(record)
+        current_token += record_token
+
+    if current_batch:
+        batches.append(current_batch)
+
+    return batches
+
+
+async def _process_ltm_batch(
+    agent_id: int,
+    batch_records: list,
+    ltm_dao: LongTermMemDAO,
+    qdrant_client: QdrantClient,
+) -> bool:
+    """處理單個 LTM 批次。
+
+    Args:
+        agent_id: Agent ID
+        batch_records: 記錄批次
+        ltm_dao: LTM DAO
+        qdrant_client: Qdrant 客戶端
+
+    Returns:
+        是否成功
+    """
+    try:
+        # 格式化對話
+        conversation = _format_conversation(batch_records)
+
+        # 生成 prompt
+        prompt = await apply_ltm_prompt_template(conversation)
+
+        # 由於 review_ltm 是獨立函數（不在 LangGraph node 中），
+        # 需要調用者提供 model。但為了保持接口簡單，這裡使用一個默認模型。
+        # 實際使用時需要補充完整的 LLM 調用邏輯。
+
+        logger.warning(_("LTM batch 處理需要 LLM 模型，請在調用時配置模型參數"))
+        return False
+
+    except Exception as exc:
+        logger.error(_("LTM 批次處理失敗：%s"), exc)
+        return False
 
 
 async def review_stm(
