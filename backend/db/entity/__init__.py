@@ -12,6 +12,7 @@ from db.entity.agent_msg_hist import AgentMsgHistEntity
 from db.entity.short_term_mem import ShortTermMemEntity
 from db.entity.long_term_mem import LongTermMemEntity
 from db.entity.memory_block import MemoryBlockEntity
+from db.entity.task import TaskEntity
 
 __all__ = [
     "UserEntity",
@@ -24,4 +25,5 @@ __all__ = [
     "ShortTermMemEntity",
     "LongTermMemEntity",
     "MemoryBlockEntity",
+    "TaskEntity",
 ]
