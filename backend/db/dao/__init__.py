@@ -14,6 +14,8 @@ from db.dao.short_term_mem_dao import ShortTermMemDAO
 from db.dao.long_term_mem_dao import LongTermMemDAO
 from db.dao.memory_block_dao import MemoryBlockDAO
 
+from db.dao.task_dao import TaskDAO
+
 __all__ = [
     "BaseDAO",
     "UserDAO",
@@ -26,4 +28,5 @@ __all__ = [
     "ShortTermMemDAO",
     "LongTermMemDAO",
     "MemoryBlockDAO",
+    "TaskDAO",
 ]

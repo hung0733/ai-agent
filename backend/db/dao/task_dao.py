@@ -1,0 +1,60 @@
+"""Task DAO."""
+
+from __future__ import annotations
+
+from typing import Optional
+
+from sqlalchemy import select
+
+from db.dao.base import BaseDAO
+from db.dto.task import TaskCreate, TaskUpdate
+from db.entity import TaskEntity
+
+
+class TaskDAO(BaseDAO[TaskEntity]):
+    """Task 數據訪問對象。"""
+
+    entity_cls = TaskEntity
+
+    async def get_by_agent_id(self, agent_id: int, offset: int = 0, limit: int = 50) -> list[TaskEntity]:
+        """獲取指定 agent 的所有 task。"""
+        stmt = (
+            select(TaskEntity)
+            .where(TaskEntity.agent_id == agent_id)
+            .offset(offset)
+            .limit(limit)
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def get_sub_tasks(self, parent_task_id: int) -> list[TaskEntity]:
+        """獲取指定父任務的所有子任務（按 execution_order 排序）。"""
+        stmt = (
+            select(TaskEntity)
+            .where(TaskEntity.parent_task_id == parent_task_id)
+            .order_by(TaskEntity.execution_order)
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def get_pending_tasks(self, limit: int = 50) -> list[TaskEntity]:
+        """獲取所有 pending 狀態的 task。"""
+        stmt = (
+            select(TaskEntity)
+            .where(TaskEntity.status == "pending")
+            .limit(limit)
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def create_from_dto(self, dto: TaskCreate) -> TaskEntity:
+        """從 DTO 創建 task。"""
+        entity = TaskEntity(**dto.model_dump())
+        return await self.create(entity)
+
+    async def update_from_dto(self, entity: TaskEntity, dto: TaskUpdate) -> TaskEntity:
+        """從 DTO 更新 task。"""
+        update_data = dto.model_dump(exclude_unset=True)
+        for key, value in update_data.items():
+            setattr(entity, key, value)
+        return await self.update(entity)
