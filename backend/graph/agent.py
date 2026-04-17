@@ -68,21 +68,28 @@ async def chat_node(state: AgentState, config: RunnableConfig):
     )
     logger.debug(f"💬 Send Message: {last_message.content}")
 
-    for model in models:
-        # 呼叫模型 (用 ainvoke 獲取完整回應)
-        response = await model.ainvoke(messages_to_send)
+    # 綁定 file system tools 到 model
+    sandbox = config["configurable"].get("sandbox")
+    model_to_use = models[0]
+    if sandbox is not None:
+        from backend.tools import get_file_tools
+        file_tools = get_file_tools(sandbox)
+        model_to_use = model_to_use.bind_tools(file_tools)
 
-        if hasattr(response, "tool_calls") and len(response.tool_calls) > 0:
-            for tc in getattr(response, "tool_calls", []):
-                logger.info(
-                    f"🔧 收到工具調用：{tc.get('name')}, 📥 傳入參數: {tc.get('args')}"
-                )
-        else:
-            logger.info(f"💬 收到內容，長度：{len(response.content)}")
-            logger.debug(f"💬 收到內容：{response.content}")
+    # 呼叫模型 (用 ainvoke 獲取完整回應)
+    response = await model_to_use.ainvoke(messages_to_send)
 
-        # 返回最新嘅 AIMessage，LangGraph 會自動 append 落 State 度
-        return {"messages": [response]}
+    if hasattr(response, "tool_calls") and len(response.tool_calls) > 0:
+        for tc in getattr(response, "tool_calls", []):
+            logger.info(
+                _("🔧 收到工具調用：%s, 📥 傳入參數: %s") % (tc.get("name"), tc.get("args"))
+            )
+    else:
+        logger.info(_("💬 收到內容，長度：%s") % len(response.content))
+        logger.debug(_("💬 收到內容：%s") % response.content)
+
+    # 返回最新嘅 AIMessage，LangGraph 會自動 append 落 State 度
+    return {"messages": [response]}
 
 
 # 路由判斷：模型有冇 Call Tool？
