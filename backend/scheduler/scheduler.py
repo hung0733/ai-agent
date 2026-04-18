@@ -9,7 +9,7 @@ import random
 from datetime import datetime, timedelta
 from typing import Optional
 
-from croniter import croniter
+from croniter import croniter, CroniterBadCronError
 
 from db.config import async_session_factory
 from db.entity import ScheduleEntity
@@ -77,6 +77,13 @@ class TaskScheduler:
         try:
             cron = croniter(schedule.cron_expression, now_server())
             return cron.get_next(datetime)
+        except CroniterBadCronError as exc:
+            logger.error(
+                _("Schedule %s cron 表達式無效：%s"),
+                schedule.id,
+                exc,
+            )
+            return None
         except Exception as exc:
             logger.error(
                 _("Schedule %s cron 解析失敗：%s"),
@@ -94,15 +101,19 @@ class TaskScheduler:
         logger.info(_("發現 %d 個到期 schedule，正在處理"), len(due))
 
         scattered = self._scatter_schedules(due)
+        start_time = now_server()
 
         for schedule, delay in scattered:
-            if delay > 0:
+            # 計算相對等待時間（相對於 start_time）
+            target_time = start_time + timedelta(seconds=delay)
+            wait_seconds = (target_time - now_server()).total_seconds()
+            if wait_seconds > 0:
                 logger.debug(
                     _("Schedule %s 將延遲 %.1f 秒執行"),
                     schedule.id,
-                    delay,
+                    wait_seconds,
                 )
-                await asyncio.sleep(delay)
+                await asyncio.sleep(wait_seconds)
 
             async with async_session_factory() as session:
                 manager = ScheduleManager(session)
