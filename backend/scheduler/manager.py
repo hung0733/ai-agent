@@ -7,10 +7,9 @@ from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
-from db.config import async_session_factory
-from db.dao.base import BaseDAO
 from db.dao.schedule_dao import ScheduleDAO
 from db.dao.task_dao import TaskDAO
 from db.dto.task import TaskCreate
@@ -24,7 +23,7 @@ logger = logging.getLogger(__name__)
 class ScheduleManager:
     """負責 DB 操作：載入、更新 schedule，創建 task record。"""
 
-    def __init__(self, session) -> None:
+    def __init__(self, session: AsyncSession) -> None:
         self._session = session
         self._schedule_dao = ScheduleDAO(session)
         self._task_dao = TaskDAO(session)
@@ -33,7 +32,7 @@ class ScheduleManager:
         """載入所有 enabled schedule（包含關聯嘅 task）。"""
         stmt = (
             select(ScheduleEntity)
-            .where(ScheduleEntity.enabled == True)
+            .where(ScheduleEntity.enabled.is_(True))
             .options(joinedload(ScheduleEntity.task))
         )
         result = await self._session.execute(stmt)

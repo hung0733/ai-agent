@@ -87,7 +87,11 @@ async def test_create_task_record(manager, mock_session, sample_schedule):
 
 
 @pytest.mark.asyncio
-async def test_create_task_record_missing_task(manager, mock_session):
+async def test_create_task_record_missing_task(mock_session):
+    manager = ScheduleManager(mock_session)
+    mock_task_dao = AsyncMock()
+    manager._task_dao = mock_task_dao
+
     schedule = MagicMock(spec=ScheduleEntity)
     schedule.id = 2
     schedule.task = None
@@ -95,7 +99,7 @@ async def test_create_task_record_missing_task(manager, mock_session):
     result = await manager.create_task_record(schedule)
 
     assert result is None
-    mock_session.add.assert_not_called()
+    mock_task_dao.create.assert_not_called()
 
 
 @pytest.mark.asyncio
