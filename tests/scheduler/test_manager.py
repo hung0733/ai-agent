@@ -84,3 +84,27 @@ async def test_create_task_record(manager, mock_session, sample_schedule):
 
         assert result is not None
         mock_task_dao.create.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_create_task_record_missing_task(manager, mock_session):
+    schedule = MagicMock(spec=ScheduleEntity)
+    schedule.id = 2
+    schedule.task = None
+
+    result = await manager.create_task_record(schedule)
+
+    assert result is None
+    mock_session.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_load_enabled_schedules_empty(manager, mock_session):
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.all.return_value = []
+    mock_session.execute.return_value = mock_result
+
+    result = await manager.load_enabled_schedules()
+
+    assert result == []
+    mock_session.execute.assert_called_once()

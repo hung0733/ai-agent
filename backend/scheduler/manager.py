@@ -37,7 +37,9 @@ class ScheduleManager:
             .options(joinedload(ScheduleEntity.task))
         )
         result = await self._session.execute(stmt)
-        return list(result.scalars().all())
+        schedules = list(result.scalars().all())
+        logger.debug(_("已載入 %d 個 enabled schedule"), len(schedules))
+        return schedules
 
     async def mark_schedule_executed(
         self, schedule: ScheduleEntity, next_run_at: datetime
