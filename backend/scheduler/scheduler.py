@@ -115,21 +115,40 @@ class TaskScheduler:
                 )
                 await asyncio.sleep(wait_seconds)
 
+            # 每個 schedule 用獨立 session 處理，避免 session 衝突
             async with async_session_factory() as session:
                 manager = ScheduleManager(session)
 
-                next_run = self._calculate_next_run(schedule)
+                # 重新載入 schedule 以確保 session 正確
+                try:
+                    from db.dao.schedule_dao import ScheduleDAO
+                    schedule_dao = ScheduleDAO(session)
+                    fresh_schedule = await schedule_dao.get_by_id(schedule.id)
+                    if fresh_schedule is None:
+                        logger.warning(_("Schedule %s 已不存在"), schedule.id)
+                        continue
+                except Exception as exc:
+                    logger.error(
+                        _("Schedule %s 重新載入失敗：%s"),
+                        schedule.id,
+                        exc,
+                    )
+                    # 保留原 schedule 到 heap
+                    self._add_to_heap(schedule)
+                    continue
+
+                next_run = self._calculate_next_run(fresh_schedule)
                 if next_run is None:
                     # cron 解析失敗，disable 該 schedule
-                    schedule.enabled = False
+                    fresh_schedule.enabled = False
                     await session.commit()
                     continue
 
                 try:
-                    await manager.create_task_record(schedule)
-                    await manager.mark_schedule_executed(schedule, next_run)
+                    await manager.create_task_record(fresh_schedule)
+                    await manager.mark_schedule_executed(fresh_schedule, next_run)
                     await session.commit()
-                    self._add_to_heap(schedule)
+                    self._add_to_heap(fresh_schedule)
                 except Exception as exc:
                     logger.error(
                         _("Schedule %s 處理失敗：%s"),
@@ -145,7 +164,9 @@ class TaskScheduler:
         async with async_session_factory() as session:
             manager = ScheduleManager(session)
             try:
+                # 載入到臨時列表，成功後先清除 heap 再添加
                 schedules = await manager.load_enabled_schedules()
+                # 保存 schedule ID 列表，唔保持 session 關聯
                 self._heap.clear()
                 for schedule in schedules:
                     self._add_to_heap(schedule)
