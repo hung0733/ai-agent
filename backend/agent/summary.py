@@ -8,6 +8,8 @@ import os
 from datetime import datetime, timezone
 
 from langchain_core.language_models import BaseChatModel
+from langchain_openai import ChatOpenAI
+from pydantic import SecretStr
 
 from agent.prompt import apply_ltm_prompt_template, apply_stm_prompt_template
 from db.config import async_session_factory
@@ -116,7 +118,7 @@ def compute_truncate_count(summary_groups: list[list]) -> int:
 
     return max(0, max_idx)
 
-async def review_ltm(agent_id: int, model: BaseChatModel) -> dict:
+async def review_ltm(agent_id: str) -> dict:
     """Review and summarize long-term memory.
 
     查詢未總結的記錄，按 session_id + date 分組，
@@ -124,12 +126,17 @@ async def review_ltm(agent_id: int, model: BaseChatModel) -> dict:
 
     Args:
         agent_id: Agent ID
-        model: LLM model for generating memories
 
     Returns:
         {"processed": int, "errors": int}
     """
-    import os
+    model = ChatOpenAI(
+        base_url=Tools.require_env("SYS_ACT_LLM_ENDPOINT"),
+        api_key=SecretStr(Tools.require_env("SYS_ACT_LLM_API_KEY")),
+        model=Tools.require_env("SYS_ACT_LLM_MODEL"),
+        streaming=True,
+        stream_usage=True,
+    )
 
     processed_count = 0
     error_count = 0
@@ -141,7 +148,7 @@ async def review_ltm(agent_id: int, model: BaseChatModel) -> dict:
         ltm_dao = LongTermMemDAO(session)
 
         # Step 1: 查詢未總結的記錄
-        records = await hist_dao.list_unsummarized_for_ltm()
+        records = await hist_dao.list_unsummarized_for_ltm(agent_id)
         if not records:
             logger.debug(_("無未總結的記錄，agent_id=%s"), agent_id)
             return {"processed": 0, "errors": 0, "memories": []}

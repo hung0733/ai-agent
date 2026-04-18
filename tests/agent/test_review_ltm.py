@@ -29,13 +29,13 @@ async def test_review_ltm_no_records(monkeypatch: pytest.MonkeyPatch):
         def __init__(self, session: object) -> None:
             pass
 
-        async def list_unsummarized_for_ltm(self) -> list:
+        async def list_unsummarized_for_ltm(self, agent_id: str) -> list:
             return []
 
     monkeypatch.setattr(summary, "async_session_factory", FakeSessionContext)
     monkeypatch.setattr(summary, "AgentMsgHistDAO", FakeHistDAO)
 
-    result = await summary.review_ltm(agent_id=1, model=MagicMock())
+    result = await summary.review_ltm(agent_id="test_agent")
     assert result == {"processed": 0, "errors": 0, "memories": []}
 
 
@@ -105,7 +105,7 @@ async def test_review_ltm_marks_correct_ids_on_success(monkeypatch: pytest.Monke
         def __init__(self, session: object) -> None:
             self.marked_ids = None
 
-        async def list_unsummarized_for_ltm(self) -> list:
+        async def list_unsummarized_for_ltm(self, agent_id: str) -> list:
             return [
                 SimpleNamespace(id=1, session_id=1, create_dt=datetime(2026, 4, 17, 10, 0, 0), token=100),
                 SimpleNamespace(id=2, session_id=1, create_dt=datetime(2026, 4, 17, 11, 0, 0), token=200),
@@ -139,8 +139,9 @@ async def test_review_ltm_marks_correct_ids_on_success(monkeypatch: pytest.Monke
     monkeypatch.setattr(summary, "LongTermMemDAO", FakeLtmDAO)
     monkeypatch.setattr(summary, "QdrantClient", FakeQdrantClient)
     monkeypatch.setattr(summary, "_process_ltm_batch", fake_process_ltm_batch)
+    monkeypatch.setattr(summary, "ChatOpenAI", MagicMock())
 
-    result = await summary.review_ltm(agent_id=1, model=MagicMock())
+    result = await summary.review_ltm(agent_id="test_agent")
 
     assert result["processed"] == 3
     assert result["errors"] == 0
@@ -164,7 +165,7 @@ async def test_review_ltm_error_handling(monkeypatch: pytest.MonkeyPatch):
         def __init__(self, session: object) -> None:
             self.marked_ids = None
 
-        async def list_unsummarized_for_ltm(self) -> list:
+        async def list_unsummarized_for_ltm(self, agent_id: str) -> list:
             return [
                 SimpleNamespace(id=1, session_id=1, create_dt=datetime(2026, 4, 17, 10, 0, 0), token=100),
                 SimpleNamespace(id=2, session_id=1, create_dt=datetime(2026, 4, 17, 11, 0, 0), token=200),
@@ -191,8 +192,9 @@ async def test_review_ltm_error_handling(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(summary, "LongTermMemDAO", FakeLtmDAO)
     monkeypatch.setattr(summary, "QdrantClient", FakeQdrantClient)
     monkeypatch.setattr(summary, "_process_ltm_batch", fake_process_ltm_batch)
+    monkeypatch.setattr(summary, "ChatOpenAI", MagicMock())
 
-    result = await summary.review_ltm(agent_id=1, model=MagicMock())
+    result = await summary.review_ltm(agent_id="test_agent")
 
     assert result["processed"] == 0
     assert result["errors"] == 2
@@ -216,7 +218,7 @@ async def test_review_ltm_partial_success(monkeypatch: pytest.MonkeyPatch):
         def __init__(self, session: object) -> None:
             self.marked_ids = None
 
-        async def list_unsummarized_for_ltm(self) -> list:
+        async def list_unsummarized_for_ltm(self, agent_id: str) -> list:
             return [
                 SimpleNamespace(id=10, session_id=1, create_dt=datetime(2026, 4, 17, 10, 0, 0), token=100),
                 SimpleNamespace(id=20, session_id=1, create_dt=datetime(2026, 4, 17, 11, 0, 0), token=200),
@@ -252,8 +254,9 @@ async def test_review_ltm_partial_success(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(summary, "LongTermMemDAO", FakeLtmDAO)
     monkeypatch.setattr(summary, "QdrantClient", FakeQdrantClient)
     monkeypatch.setattr(summary, "_process_ltm_batch", fake_process_ltm_batch)
+    monkeypatch.setattr(summary, "ChatOpenAI", MagicMock())
 
-    result = await summary.review_ltm(agent_id=1, model=MagicMock())
+    result = await summary.review_ltm(agent_id="test_agent")
 
     assert result["processed"] == 2
     assert result["errors"] == 1

@@ -163,15 +163,21 @@ class AgentMsgHistDAO(BaseDAO[AgentMsgHistEntity]):
         )
         await self._session.execute(stmt)
 
-    async def list_unsummarized_for_ltm(self) -> list[AgentMsgHistEntity]:
-        """列出所有 is_ltm_summary=False 的記錄。
+    async def list_unsummarized_for_ltm(self, agent_id: str) -> list[AgentMsgHistEntity]:
+        """列出指定 agent 未 LTM 總結的記錄。
+
+        Args:
+            agent_id: Agent ID
 
         Returns:
             未總結的記錄列表
         """
         stmt = (
             select(AgentMsgHistEntity)
-            .where(AgentMsgHistEntity.is_ltm_summary == False)  # noqa: E712
+            .where(
+                AgentMsgHistEntity.agent_id == agent_id,
+                AgentMsgHistEntity.is_ltm_summary == False,  # noqa: E712
+            )
             .order_by(AgentMsgHistEntity.session_id, AgentMsgHistEntity.create_dt)
         )
         result = await self._session.execute(stmt)
