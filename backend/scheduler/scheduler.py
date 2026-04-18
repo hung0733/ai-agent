@@ -14,7 +14,7 @@ from croniter import croniter
 from db.config import async_session_factory
 from db.entity import ScheduleEntity
 from i18n import _
-from scheduler.manager import ScheduleManager
+from .manager import ScheduleManager
 from utils.timezone import now_server
 
 logger = logging.getLogger(__name__)
@@ -95,17 +95,17 @@ class TaskScheduler:
 
         scattered = self._scatter_schedules(due)
 
-        async with async_session_factory() as session:
-            manager = ScheduleManager(session)
+        for schedule, delay in scattered:
+            if delay > 0:
+                logger.debug(
+                    _("Schedule %s 將延遲 %.1f 秒執行"),
+                    schedule.id,
+                    delay,
+                )
+                await asyncio.sleep(delay)
 
-            for schedule, delay in scattered:
-                if delay > 0:
-                    logger.debug(
-                        _("Schedule %s 將延遲 %.1f 秒執行"),
-                        schedule.id,
-                        delay,
-                    )
-                    await asyncio.sleep(delay)
+            async with async_session_factory() as session:
+                manager = ScheduleManager(session)
 
                 next_run = self._calculate_next_run(schedule)
                 if next_run is None:
@@ -146,6 +146,8 @@ class TaskScheduler:
         """主循環：計算 sleep 時間 → wake up → 處理到期 schedule。"""
         logger.info(_("TaskScheduler 主循環已啟動"))
 
+        last_reload = now_server()
+
         while self._running:
             try:
                 sleep_time = self._get_sleep_time()
@@ -156,8 +158,10 @@ class TaskScheduler:
                 await self._process_due_schedules()
 
                 # 定期重新載入（每 60 秒）
-                if not self._heap:
+                elapsed = (now_server() - last_reload).total_seconds()
+                if elapsed >= _MAX_SLEEP_TIME:
                     await self._reload_schedules()
+                    last_reload = now_server()
 
             except asyncio.CancelledError:
                 break
