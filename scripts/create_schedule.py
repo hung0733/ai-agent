@@ -123,7 +123,7 @@ async def main() -> None:
             parent_task_id=args.parent_task_id,
             execution_order=args.execution_order,
             required_skill=args.required_skill,
-            status="pending",
+            status="schedule",
             parameters=parameters if parameters else None,
             next_process_dt=next_run,
         )
