@@ -24,13 +24,16 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "backend"))
 
 from croniter import croniter
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError as SAIntegrityError
 
 from db.config import async_session_factory
+from db.dao.agent_dao import AgentDAO
 from db.dao.schedule_dao import ScheduleDAO
 from db.dao.task_dao import TaskDAO
 from db.dto.schedule import ScheduleCreate
 from db.dto.task import TaskCreate
-from db.entity import ScheduleEntity, TaskEntity
+from db.entity import AgentEntity, ScheduleEntity, TaskEntity
 from i18n import _
 from utils.timezone import now_server
 
@@ -86,8 +89,30 @@ async def main() -> None:
     print(f"  Parameters: {args.parameters}")
 
     async with async_session_factory() as session:
+        agent_dao = AgentDAO(session)
         task_dao = TaskDAO(session)
         schedule_dao = ScheduleDAO(session)
+
+        # Validate agent exists
+        stmt = select(AgentEntity).where(AgentEntity.id == args.agent_id)
+        result = await session.execute(stmt)
+        agent = result.scalar_one_or_none()
+
+        if not agent:
+            print(f"\n{_('錯誤')}：Agent ID {args.agent_id} 不存在於資料庫中。")
+            # List available agents
+            all_agents = await session.execute(select(AgentEntity))
+            agents = all_agents.scalars().all()
+            if agents:
+                print(f"\n{_('可用的 Agent 列表：')}")
+                print(f"  {'ID':<6} {'Name':<25} {'agent_id'}")
+                print(f"  {'─' * 6} {'─' * 25} {'─' * 30}")
+                for a in agents:
+                    print(f"  {a.id:<6} {a.name:<25} {a.agent_id}")
+                print(f"\n{_('請使用 --agent-id <ID> 指定正確的 agent。')}")
+            else:
+                print(f"\n{_('資料庫中沒有任何 agent。請先建立 agent。')}")
+            sys.exit(1)
 
         # Create task
         task_dto = TaskCreate(
@@ -102,7 +127,18 @@ async def main() -> None:
             parameters=parameters if parameters else None,
             next_process_dt=next_run,
         )
-        task = await task_dao.create_from_dto(task_dto)
+
+        try:
+            task = await task_dao.create_from_dto(task_dto)
+        except SAIntegrityError as exc:
+            error_msg = str(exc.orig) if hasattr(exc, "orig") else str(exc)
+            print(f"\n{_('錯誤')}：無法創建任務 — 資料庫完整性違反。")
+            if "foreign key" in error_msg.lower() or "fkey" in error_msg.lower():
+                print(_("請確認所有外鍵引用的記錄都存在（agent_id, parent_task_id 等）。"))
+            else:
+                print(f"  詳細訊息：{error_msg}")
+            sys.exit(1)
+
         print(f"\nCreated task (id={task.id})")
 
         # Create schedule
