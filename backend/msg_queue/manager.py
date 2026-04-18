@@ -9,6 +9,8 @@ from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Awaitable, Callable, Dict, Optional
 
+from db.config import async_session_factory
+from db.dao.agent_dao import AgentDAO
 from i18n import _
 from msg_queue.models import (
     QueueStats,
@@ -282,6 +284,35 @@ class QueueManager:
             await handler(task)
 
     async def _process_task(self, task: QueueTask) -> None:
+        # 檢查 agent 狀態，非 idle 則放回隊列
+        try:
+            async with async_session_factory() as status_session:
+                agent_dao = AgentDAO(status_session)
+                agent_entity = await agent_dao.get_by_agent_id(task.agent_id)
+                if not agent_entity:
+                    logger.error(_("找不到 agent %s"), task.agent_id)
+                    task.status = QueueTaskStatus.FAILED
+                    task.error = _("Agent 不存在")
+                    return
+
+                if agent_entity.status != "idle":
+                    logger.debug(
+                        _("Agent %s 狀態為 %s，放回隊列"),
+                        task.agent_id, agent_entity.status,
+                    )
+                    async with self._lock:
+                        self._queues[task.priority].appendleft(task)
+                    return
+
+                # 設為 busy
+                agent_entity.status = "busy"
+                await status_session.commit()
+        except Exception as exc:
+            logger.error(_("檢查/更新 agent 狀態失敗：%s"), exc)
+            task.status = QueueTaskStatus.FAILED
+            task.error = str(exc)
+            return
+
         task.status = QueueTaskStatus.PROCESSING
         task.started_at = time.time()
         self._processing[task.id] = task
@@ -308,6 +339,17 @@ class QueueManager:
             except Exception as cb_exc:
                 logger.error(_("error_callback 失敗：%s"), cb_exc)
         finally:
+            # 設回 idle
+            try:
+                async with async_session_factory() as status_session:
+                    agent_dao = AgentDAO(status_session)
+                    agent_entity = await agent_dao.get_by_agent_id(task.agent_id)
+                    if agent_entity:
+                        agent_entity.status = "idle"
+                        await status_session.commit()
+            except Exception as exc:
+                logger.error(_("重置 agent 狀態失敗：%s"), exc)
+
             task.completed_at = time.time()
             self._processing.pop(task.id, None)
 

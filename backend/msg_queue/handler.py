@@ -271,15 +271,6 @@ class MsgQueueHandler:
             task.update_state(QueueTaskState.STREAMING_TO_CLIENT)
             await task.complete_callback({})
 
-            Tools.start_async_task(
-                review_stm(
-                    task.agent.session_db_id,
-                    models[0],
-                    task.agent.stm_trigger_token,
-                    task.agent.stm_summary_token,
-                )
-            )
-
         except Exception as exc:
             logger.error(
                 _("任務 %s：send_llm_msg 失敗：%s\n%s"),
@@ -290,6 +281,45 @@ class MsgQueueHandler:
             task.update_state(QueueTaskState.ERROR)
             task.error = str(exc)
             raise
+
+
+    @staticmethod
+    async def review_stm(task: QueueTask) -> None:
+        """執行 STM review，完成後標記任務完成。"""
+        logger.debug(_("任務 %s：review_stm"), task.id)
+        try:
+            if task.agent is None:
+                raise ValueError(_("Agent 未初始化"))
+
+            models = task.model_set or []
+            if not models:
+                raise ValueError(_("LLM model 未設置"))
+
+            result = await review_stm(
+                session_db_id=task.agent.session_db_id,
+                model=models[0],
+                stm_trigger_token=task.agent.stm_trigger_token,
+                stm_summary_token=task.agent.stm_summary_token,
+            )
+
+            if result:
+                truncate_count, summary_groups, records = result
+                logger.info(
+                    _("任務 %s：STM review 完成，截斷 %s 條記錄"),
+                    task.id, truncate_count,
+                )
+            else:
+                logger.debug(_("任務 %s：STM review 無需要處理"), task.id)
+
+            task.update_state(QueueTaskState.COMPLETED)
+        except Exception as exc:
+            logger.error(
+                _("任務 %s：review_stm 失敗：%s\n%s"),
+                task.id,
+                exc,
+                traceback.format_exc(),
+            )
+            task.update_state(QueueTaskState.COMPLETED)
 
 
 def register_all_handlers(qm: Optional[QueueManager] = None) -> QueueManager:
@@ -312,5 +342,8 @@ def register_all_handlers(qm: Optional[QueueManager] = None) -> QueueManager:
     )
     qm.register_state_handler(
         QueueTaskState.SELECTED_LLM_MODEL, MsgQueueHandler.send_llm_msg
+    )
+    qm.register_state_handler(
+        QueueTaskState.STREAMING_TO_CLIENT, MsgQueueHandler.review_stm
     )
     return qm

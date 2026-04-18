@@ -37,6 +37,7 @@ class QueueTaskState(StrEnum):
     WAITING_RESPONSE = "waiting_response"
     RECEIVING_STREAM = "receiving_stream"
     STREAMING_TO_CLIENT = "streaming_to_client"
+    REVIEWING_STM = "reviewing_stm"
     COMPLETED = "completed"
     ERROR = "error"
 

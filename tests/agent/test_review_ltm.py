@@ -36,7 +36,7 @@ async def test_review_ltm_no_records(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(summary, "AgentMsgHistDAO", FakeHistDAO)
 
     result = await summary.review_ltm(agent_id=1, model=MagicMock())
-    assert result == {"processed": 0, "errors": 0}
+    assert result == {"processed": 0, "errors": 0, "memories": []}
 
 
 @pytest.mark.asyncio
@@ -124,9 +124,15 @@ async def test_review_ltm_marks_correct_ids_on_success(monkeypatch: pytest.Monke
             pass
 
     fake_hist_dao = FakeHistDAO(None)
+    batch_call_count = 0
 
-    async def fake_process_ltm_batch(**kwargs) -> bool:
-        return True
+    async def fake_process_ltm_batch(**kwargs) -> list:
+        nonlocal batch_call_count
+        batch_call_count += 1
+        # 每個 batch 返回 1 條 memory
+        return [
+            {"wing": "Project_JARVIS", "room": "Database", "content": f"Test memory {batch_call_count}"},
+        ]
 
     monkeypatch.setattr(summary, "async_session_factory", FakeSessionContext)
     monkeypatch.setattr(summary, "AgentMsgHistDAO", lambda session: fake_hist_dao)
@@ -139,6 +145,7 @@ async def test_review_ltm_marks_correct_ids_on_success(monkeypatch: pytest.Monke
     assert result["processed"] == 3
     assert result["errors"] == 0
     assert fake_hist_dao.marked_ids == [1, 2, 3]
+    assert len(result["memories"]) == 2
 
 
 @pytest.mark.asyncio
@@ -176,8 +183,8 @@ async def test_review_ltm_error_handling(monkeypatch: pytest.MonkeyPatch):
 
     fake_hist_dao = FakeHistDAO(None)
 
-    async def fake_process_ltm_batch(**kwargs) -> bool:
-        return False
+    async def fake_process_ltm_batch(**kwargs) -> list:
+        return []
 
     monkeypatch.setattr(summary, "async_session_factory", FakeSessionContext)
     monkeypatch.setattr(summary, "AgentMsgHistDAO", lambda session: fake_hist_dao)
@@ -190,6 +197,7 @@ async def test_review_ltm_error_handling(monkeypatch: pytest.MonkeyPatch):
     assert result["processed"] == 0
     assert result["errors"] == 2
     assert fake_hist_dao.marked_ids is None
+    assert result["memories"] == []
 
 
 @pytest.mark.asyncio
@@ -229,10 +237,15 @@ async def test_review_ltm_partial_success(monkeypatch: pytest.MonkeyPatch):
     fake_hist_dao = FakeHistDAO(None)
     call_count = 0
 
-    async def fake_process_ltm_batch(**kwargs) -> bool:
+    async def fake_process_ltm_batch(**kwargs) -> list:
         nonlocal call_count
         call_count += 1
-        return call_count != 2
+        # 只有第一次調用（第一個 batch）成功返回 memories
+        if call_count == 1:
+            return [
+                {"wing": "Project_JARVIS", "room": "Database", "content": "Memory batch 1"},
+            ]
+        return []
 
     monkeypatch.setattr(summary, "async_session_factory", FakeSessionContext)
     monkeypatch.setattr(summary, "AgentMsgHistDAO", lambda session: fake_hist_dao)
@@ -246,3 +259,4 @@ async def test_review_ltm_partial_success(monkeypatch: pytest.MonkeyPatch):
     assert result["errors"] == 1
     assert fake_hist_dao.marked_ids is not None
     assert len(fake_hist_dao.marked_ids) == 2
+    assert len(result["memories"]) == 1

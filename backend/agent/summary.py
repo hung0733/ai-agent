@@ -134,6 +134,7 @@ async def review_ltm(agent_id: int, model: BaseChatModel) -> dict:
     processed_count = 0
     error_count = 0
     processed_ids: list[int] = []
+    all_memories: list[dict] = []
 
     async with async_session_factory() as session:
         hist_dao = AgentMsgHistDAO(session)
@@ -143,7 +144,7 @@ async def review_ltm(agent_id: int, model: BaseChatModel) -> dict:
         records = await hist_dao.list_unsummarized_for_ltm()
         if not records:
             logger.debug(_("無未總結的記錄，agent_id=%s"), agent_id)
-            return {"processed": 0, "errors": 0}
+            return {"processed": 0, "errors": 0, "memories": []}
 
         # Step 2: 按 session_id + date 分組
         groups = _group_records_by_session_date(records)
@@ -161,16 +162,17 @@ async def review_ltm(agent_id: int, model: BaseChatModel) -> dict:
                 batches = _split_records_by_token_limit(group_records, limit=30000)
 
                 for batch in batches:
-                    success = await _process_ltm_batch(
+                    batch_memories = await _process_ltm_batch(
                         agent_id=agent_id,
                         batch_records=batch,
                         ltm_dao=ltm_dao,
                         qdrant_client=qdrant_client,
                         model=model,
                     )
-                    if success:
+                    if batch_memories:
                         processed_count += len(batch)
                         processed_ids.extend([r.id for r in batch])
+                        all_memories.extend(batch_memories)
                     else:
                         error_count += len(batch)
 
@@ -185,7 +187,7 @@ async def review_ltm(agent_id: int, model: BaseChatModel) -> dict:
         await session.commit()
 
     logger.info(_("LTM review 完成：處理 %s 條，錯誤 %s 條"), processed_count, error_count)
-    return {"processed": processed_count, "errors": error_count}
+    return {"processed": processed_count, "errors": error_count, "memories": all_memories}
 
 
 def _group_records_by_session_date(records: list) -> dict:
@@ -245,7 +247,7 @@ async def _process_ltm_batch(
     ltm_dao: LongTermMemDAO,
     qdrant_client: QdrantClient,
     model: BaseChatModel,
-) -> bool:
+) -> list[dict]:
     """處理單個 LTM 批次。
 
     Args:
@@ -256,7 +258,7 @@ async def _process_ltm_batch(
         model: LLM model for generating memories
 
     Returns:
-        是否成功
+        成功生成的 memories list，格式為 [{"wing": ..., "room": ..., "content": ...}]
     """
     try:
         total_token = sum(getattr(r, "token", 0) for r in batch_records)
@@ -300,12 +302,12 @@ async def _process_ltm_batch(
             data = json.loads(content)
         except json.JSONDecodeError as e:
             logger.error(_("LLM 返回的 JSON 格式錯誤: %s — %s"), content[:200], e)
-            return False
+            return []
 
         memories = data.get("memories", [])
         if not memories:
             logger.debug(_("LLM 未返回任何 memories"))
-            return False
+            return []
 
         from langchain_openai import OpenAIEmbeddings
 
@@ -318,6 +320,7 @@ async def _process_ltm_batch(
 
         now = datetime.now(timezone.utc)
         qdrant_points = []
+        result_memories: list[dict] = []
 
         for memory in memories:
             restatement = memory.get("lossless_restatement", "")
@@ -362,15 +365,21 @@ async def _process_ltm_batch(
                 },
             })
 
+            result_memories.append({
+                "wing": wing,
+                "room": room,
+                "content": restatement,
+            })
+
         if qdrant_points:
             await qdrant_client.upsert_points(qdrant_points)
 
-        logger.info(_("已寫入 %s 條 long-term memories"), len(memories))
-        return True
+        logger.info(_("已寫入 %s 條 long-term memories"), len(result_memories))
+        return result_memories
 
     except Exception as exc:
         logger.error(_("LTM 批次處理失敗：%s"), exc)
-        return False
+        return []
 
 
 async def review_stm(

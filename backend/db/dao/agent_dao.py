@@ -22,6 +22,24 @@ class AgentDAO(BaseDAO[AgentEntity]):
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def get_status(self, agent_id: str) -> Optional[str]:
+        """獲取 agent 狀態。"""
+        entity = await self.get_by_agent_id(agent_id)
+        return entity.status if entity else None
+
+    async def update_status(self, agent_id: str, status: str) -> bool:
+        """更新 agent 狀態。
+
+        Returns:
+            True 如果成功更新，False 如果 agent 不存在。
+        """
+        entity = await self.get_by_agent_id(agent_id)
+        if not entity:
+            return False
+        entity.status = status
+        await self.update(entity)
+        return True
+
     async def list_by_user(self, user_id: int, offset: int = 0, limit: int = 50) -> list[AgentEntity]:
         """列出用戶的所有 agent。"""
         stmt = (
