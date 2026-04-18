@@ -1,5 +1,6 @@
 import logging
 import os
+from datetime import datetime
 from typing import Any, Dict
 
 from langchain_core.messages import (
@@ -78,53 +79,49 @@ async def chat_node(state: AgentState, config: RunnableConfig):
 
     # LTM Search - 每次 human message 都檢索
     last_message: BaseMessage = state["messages"][-1]
-    if session_db_id is not None and isinstance(last_message, HumanMessage):
-        try:
-            from backend.agent.ltm_search import search_ltm
-            from backend.vector.qdrant_client import QdrantClient
-            from db.dao.session_dao import SessionDAO
+    # if session_db_id is not None and isinstance(last_message, HumanMessage):
+    #     try:
+    #         from backend.agent.ltm_search import search_ltm
+    #         from backend.vector.qdrant_client import QdrantClient
+    #         from db.dao.session_dao import SessionDAO
 
-            async with async_session_factory() as db_session:
-                session_dao = SessionDAO(db_session)
-                session = await session_dao.get_by_id(session_db_id)
-                if session:
-                    agent_id = session.recv_agent_id
+    #         async with async_session_factory() as db_session:
+    #             session_dao = SessionDAO(db_session)
+    #             session = await session_dao.get_by_id(session_db_id)
+    #             if session:
+    #                 agent_id = session.recv_agent_id
 
-                    qdrant_client = QdrantClient()
-                    await qdrant_client.ensure_collection(
-                        vector_size=int(os.getenv("EMBEDDING_DIMENSION", "2560"))
-                    )
+    #                 qdrant_client = QdrantClient()
+    #                 await qdrant_client.ensure_collection(
+    #                     vector_size=int(os.getenv("EMBEDDING_DIMENSION", "2560"))
+    #                 )
 
-                    embedding_model = _get_embedding_model()
-                    query_embedding = await embedding_model.aembed_query(last_message.content)
+    #                 embedding_model = _get_embedding_model()
+    #                 query_embedding = await embedding_model.aembed_query(last_message.content)
 
-                    ltm_context = await search_ltm(
-                        query=last_message.content,
-                        agent_id=agent_id,
-                        qdrant_client=qdrant_client,
-                        query_vector=query_embedding,
-                    )
+    #                 ltm_context = await search_ltm(
+    #                     query=last_message.content,
+    #                     agent_id=agent_id,
+    #                     qdrant_client=qdrant_client,
+    #                     query_vector=query_embedding,
+    #                 )
 
-                    if ltm_context:
-                        messages_to_send.append(AIMessage(content=ltm_context))
-        except Exception as exc:
-            logger.warning(_("LTM 檢索失敗，跳過：%s"), exc)
+    #                 if ltm_context:
+    #                     messages_to_send.append(AIMessage(content=ltm_context))
+    #     except Exception as exc:
+    #         logger.warning(_("LTM 檢索失敗，跳過：%s"), exc)
 
     message: BaseMessage
     msg_count: int = 0
     msg_token: int = 0
     msg_len: int = 0
 
-    for message in state["messages"]:
+    # 遍历所有消息，但不包括最后一条
+    for message in state["messages"][:-1]:
         messages_to_send.append(message)
-        last_message = message
         msg_count += 1
         msg_token += Tools.get_token_count(message.content)
         msg_len += len(message.content)
-
-    msg_count -= 1
-    msg_token -= Tools.get_token_count(last_message.content)
-    msg_len -= len(last_message.content)
 
     logger.info(
         _("Message History, Count: %s, Length: %s, Token: %s"),
@@ -132,6 +129,15 @@ async def chat_node(state: AgentState, config: RunnableConfig):
         msg_len,
         msg_token,
     )
+
+    # 在 last_message 前加入当前日期时间
+    current_datetime_msg = AIMessage(
+        content=f"當前系統時間 (Current Datetime): {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+    )
+    messages_to_send.append(current_datetime_msg)
+
+    # 最后加入 last_message
+    messages_to_send.append(last_message)
     logger.info(
         _("Send Message, Length: %s, Token: %s"),
         len(last_message.content),

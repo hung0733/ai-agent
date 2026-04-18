@@ -95,10 +95,7 @@ async def apply_prompt_template(
         soul=await get_agent_soul(agent_db_id),
     )
 
-    return (
-        prompt
-        + f"\n<current_date>{datetime.now().strftime('%Y-%m-%d %H:%M')}</current_date>"
-    )
+    return prompt
 
 
 LTM_PROMPT_TEMPLATE = """[角色設定]
