@@ -107,6 +107,7 @@ class TaskProcessor:
         """處理單個 task。"""
         async with async_session_factory() as session:
             task_dao = TaskDAO(session)
+            agent_dao = AgentDAO(session)
 
             # 重新載入 task（確保 session 正確）
             fresh_task = await task_dao.get_by_id(task.id)
@@ -114,7 +115,13 @@ class TaskProcessor:
                 logger.warning(_("Task %s 已不存在，跳過"), task.id)
                 return
 
-            # 設為 processing
+            # 設 agent 為 busy，防止其他 task 被分配
+            fresh_agent = await agent_dao.get_by_id(fresh_task.agent_id)
+            if fresh_agent:
+                fresh_agent.status = "busy"
+                await session.commit()
+
+            # 設 task 為 processing
             fresh_task.status = "processing"
             await session.commit()
 
