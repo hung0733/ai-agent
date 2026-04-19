@@ -31,9 +31,9 @@ class TaskProcessor:
 
     def __init__(self, max_concurrent: int = 5) -> None:
         self.max_concurrent = max_concurrent
-        self._running = False
+        self._running: bool = False
         self._task: Optional[asyncio.Task] = None
-        self._semaphore = asyncio.Semaphore(max_concurrent)
+        self._semaphore: asyncio.Semaphore = asyncio.Semaphore(max_concurrent)
 
     async def start(self) -> None:
         """啟動 background loop。"""
@@ -89,7 +89,12 @@ class TaskProcessor:
             agent.agent_id,
         )
 
-        asyncio.create_task(self._process_task_with_semaphore(task, agent))
+        task_ref = asyncio.create_task(self._process_task_with_semaphore(task, agent))
+        task_ref.add_done_callback(
+            lambda t: t.exception() and logger.error(
+                _("Background task 執行錯誤：%s"), t.exception()
+            )
+        )
 
     async def _process_task_with_semaphore(
         self, task: TaskEntity, agent: AgentEntity
@@ -102,7 +107,6 @@ class TaskProcessor:
         """處理單個 task。"""
         async with async_session_factory() as session:
             task_dao = TaskDAO(session)
-            agent_dao = AgentDAO(session)
 
             # 重新載入 task（確保 session 正確）
             fresh_task = await task_dao.get_by_id(task.id)
@@ -125,7 +129,7 @@ class TaskProcessor:
                 # 獲取 handler
                 handler = get_handler(fresh_task.task_type)
                 if not handler:
-                    raise ValueError(_("未知 task_type: %s"), fresh_task.task_type)
+                    raise ValueError(_("未知 task_type: %s") % fresh_task.task_type)
 
                 # 執行 handler
                 await handler(fresh_task, agent, session)
@@ -142,7 +146,7 @@ class TaskProcessor:
                 await self._handle_task_failure(fresh_task, exc)
             finally:
                 # 重置 agent 狀態
-                await self._reset_agent_status(agent_dao, fresh_task.agent_id)
+                await self._reset_agent_status(fresh_task.agent_id)
 
     async def _handle_task_failure(self, task: TaskEntity, exc: Exception) -> None:
         """處理 task 失敗，計算重試 delay。"""
@@ -167,12 +171,14 @@ class TaskProcessor:
                 exc,
             )
 
-    async def _reset_agent_status(self, agent_dao: AgentDAO, agent_id: int) -> None:
+    async def _reset_agent_status(self, agent_id: int) -> None:
         """重置 agent 狀態為 idle。"""
         try:
-            agent_entity = await agent_dao.get_by_id(agent_id)
-            if agent_entity:
-                agent_entity.status = "idle"
-                await agent_dao._session.commit()
+            async with async_session_factory() as session:
+                agent_dao = AgentDAO(session)
+                agent_entity = await agent_dao.get_by_id(agent_id)
+                if agent_entity:
+                    agent_entity.status = "idle"
+                    await session.commit()
         except Exception as exc:
             logger.error(_("重置 agent 狀態失敗：%s"), exc)
