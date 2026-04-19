@@ -11,6 +11,7 @@ from db.config import close_db, init_db
 from msg_queue.handler import register_all_handlers
 from msg_queue.manager import get_queue_manager
 from scheduler import TaskScheduler
+from task_processor import TaskProcessor, register_method_handlers
 
 from api.routes.openai_chat import router as openai_chat_router
 
@@ -26,9 +27,14 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     scheduler = TaskScheduler()
     await scheduler.start()
 
+    processor = TaskProcessor()
+    register_method_handlers()
+    await processor.start()
+
     try:
         yield
     finally:
+        await processor.stop()
         await scheduler.stop()
         qm.stop()
         await close_db()
