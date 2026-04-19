@@ -11,8 +11,11 @@ from typing import Optional
 
 from croniter import croniter, CroniterBadCronError
 
+from sqlalchemy import select
+from sqlalchemy.orm import joinedload
+
 from db.config import async_session_factory
-from db.entity import ScheduleEntity
+from db.entity import ScheduleEntity, TaskEntity
 from i18n import _
 from .manager import ScheduleManager
 from utils.timezone import now_server
@@ -30,22 +33,22 @@ class TaskScheduler:
     """Heap-based scheduler，按 next_run_at 排序。"""
 
     def __init__(self) -> None:
-        self._heap: list[tuple[datetime, ScheduleEntity]] = []
+        self._heap: list[tuple[datetime, int]] = []  # (next_run_at, schedule_id)
         self._running = False
         self._task: Optional[asyncio.Task] = None
 
-    def _add_to_heap(self, schedule: ScheduleEntity) -> None:
+    def _add_to_heap(self, schedule_id: int, next_run_at: datetime) -> None:
         """將 schedule 加入 heap。"""
-        heapq.heappush(self._heap, (schedule.next_run_at, schedule))
+        heapq.heappush(self._heap, (next_run_at, schedule_id))
 
-    def _get_due_schedules(self) -> list[ScheduleEntity]:
-        """取出所有到期嘅 schedule。"""
+    async def _get_due_schedule_ids(self) -> list[int]:
+        """取出所有到期 schedule 的 ID。"""
         now = now_server()
-        due = []
+        due_ids = []
         while self._heap and self._heap[0][0] <= now:
-            _, schedule = heapq.heappop(self._heap)
-            due.append(schedule)
-        return due
+            _, schedule_id = heapq.heappop(self._heap)
+            due_ids.append(schedule_id)
+        return due_ids
 
     def _get_sleep_time(self) -> float:
         """計算到最近 schedule 嘅 sleep 時間。"""
@@ -94,13 +97,38 @@ class TaskScheduler:
 
     async def _process_due_schedules(self) -> None:
         """處理所有到期 schedule，打散邏輯，創建 task record。"""
-        due = self._get_due_schedules()
-        if not due:
+        due_ids = await self._get_due_schedule_ids()
+        if not due_ids:
             return
 
-        logger.info(_("發現 %d 個到期 schedule，正在處理"), len(due))
+        logger.info(_("發現 %d 個到期 schedule，正在處理"), len(due_ids))
 
-        scattered = self._scatter_schedules(due)
+        # 用獨立 session 載入所有 due schedules（包含 task relationship）
+        async with async_session_factory() as session:
+            from db.dao.schedule_dao import ScheduleDAO
+            schedule_dao = ScheduleDAO(session)
+
+            due_schedules = []
+            for sid in due_ids:
+                # 使用 joinedload 預先載入 task，避免 lazy load 觸發 greenlet 錯誤
+                stmt = (
+                    select(ScheduleEntity)
+                    .where(ScheduleEntity.id == sid)
+                    .options(joinedload(ScheduleEntity.task))
+                )
+                result = await session.execute(stmt)
+                fresh = result.scalar_one_or_none()
+                if fresh:
+                    # 在 session 內讀取 next_run_at，避免 detached 後訪問
+                    due_schedules.append((fresh.id, fresh.next_run_at, fresh))
+                else:
+                    logger.warning(_("Schedule %s 已不存在"), sid)
+
+        if not due_schedules:
+            return
+
+        # 只傳遞 entity，next_run_at 已在 session 內讀取
+        scattered = self._scatter_schedules([s[2] for s in due_schedules])
         start_time = now_server()
 
         for schedule, delay in scattered:
@@ -115,26 +143,20 @@ class TaskScheduler:
                 )
                 await asyncio.sleep(wait_seconds)
 
-            # 每個 schedule 用獨立 session 處理，避免 session 衝突
+            # 每個 schedule 用獨立 session 處理
             async with async_session_factory() as session:
                 manager = ScheduleManager(session)
 
-                # 重新載入 schedule 以確保 session 正確
-                try:
-                    from db.dao.schedule_dao import ScheduleDAO
-                    schedule_dao = ScheduleDAO(session)
-                    fresh_schedule = await schedule_dao.get_by_id(schedule.id)
-                    if fresh_schedule is None:
-                        logger.warning(_("Schedule %s 已不存在"), schedule.id)
-                        continue
-                except Exception as exc:
-                    logger.error(
-                        _("Schedule %s 重新載入失敗：%s"),
-                        schedule.id,
-                        exc,
-                    )
-                    # 保留原 schedule 到 heap
-                    self._add_to_heap(schedule)
+                # 重新載入以確保 session 正確（包含 task relationship）
+                stmt = (
+                    select(ScheduleEntity)
+                    .where(ScheduleEntity.id == schedule.id)
+                    .options(joinedload(ScheduleEntity.task))
+                )
+                result = await session.execute(stmt)
+                fresh_schedule = result.scalar_one_or_none()
+                if fresh_schedule is None:
+                    logger.warning(_("Schedule %s 已不存在"), schedule.id)
                     continue
 
                 next_run = self._calculate_next_run(fresh_schedule)
@@ -148,7 +170,7 @@ class TaskScheduler:
                     await manager.create_task_record(fresh_schedule)
                     await manager.mark_schedule_executed(fresh_schedule, next_run)
                     await session.commit()
-                    self._add_to_heap(fresh_schedule)
+                    self._add_to_heap(fresh_schedule.id, next_run)
                 except Exception as exc:
                     logger.error(
                         _("Schedule %s 處理失敗：%s"),
@@ -157,19 +179,20 @@ class TaskScheduler:
                     )
                     await session.rollback()
                     # 保留原 next_run_at，下次重試
-                    self._add_to_heap(schedule)
+                    # 從 due_schedules 中找回原 next_run_at
+                    orig_next_run = next((s[1] for s in due_schedules if s[0] == schedule.id), schedule.next_run_at)
+                    self._add_to_heap(schedule.id, orig_next_run)
 
     async def _reload_schedules(self) -> None:
         """重新載入 heap（處理 DB 變更）。"""
         async with async_session_factory() as session:
             manager = ScheduleManager(session)
             try:
-                # 載入到臨時列表，成功後先清除 heap 再添加
                 schedules = await manager.load_enabled_schedules()
-                # 保存 schedule ID 列表，唔保持 session 關聯
+                # 只保存 ID 和 next_run_at，唔保持 session 關聯
                 self._heap.clear()
                 for schedule in schedules:
-                    self._add_to_heap(schedule)
+                    self._add_to_heap(schedule.id, schedule.next_run_at)
                 logger.debug(_("已重新載入 %d 個 schedule"), len(self._heap))
             except Exception as exc:
                 logger.error(_("重新載入 schedule 失敗：%s"), exc)
