@@ -119,7 +119,9 @@ class TaskProcessor:
             fresh_agent = await agent_dao.get_by_id(fresh_task.agent_id)
             if fresh_agent:
                 fresh_agent.status = "busy"
-                await session.commit()
+            else:
+                logger.error(_("Task %s 對應嘅 agent 不存在"), fresh_task.id)
+                return
 
             # 設 task 為 processing
             fresh_task.status = "processing"
@@ -129,7 +131,7 @@ class TaskProcessor:
                 _("開始處理 task %s (type=%s, agent=%s)"),
                 fresh_task.id,
                 fresh_task.task_type,
-                agent.agent_id,
+                fresh_agent.agent_id,
             )
 
             try:
@@ -139,21 +141,23 @@ class TaskProcessor:
                     raise ValueError(_("未知 task_type: %s") % fresh_task.task_type)
 
                 # 執行 handler
-                await handler(fresh_task, agent, session)
+                await handler(fresh_task, fresh_agent, session)
 
                 # 成功 → completed
                 fresh_task.status = "completed"
                 fresh_task.error_message = None
-                await session.commit()
-
-                logger.info(_("Task %s 已完成"), fresh_task.id)
 
             except Exception as exc:
                 logger.error(_("Task %s 失敗：%s"), fresh_task.id, exc)
                 await self._handle_task_failure(fresh_task, exc)
             finally:
-                # 重置 agent 狀態
-                await self._reset_agent_status(fresh_task.agent_id)
+                # 重置 agent 狀態為 idle
+                fresh_agent.status = "idle"
+                await session.commit()
+                logger.debug(
+                    _("Agent %s 已重置為 idle"),
+                    fresh_agent.agent_id,
+                )
 
     async def _handle_task_failure(self, task: TaskEntity, exc: Exception) -> None:
         """處理 task 失敗，計算重試 delay。"""
