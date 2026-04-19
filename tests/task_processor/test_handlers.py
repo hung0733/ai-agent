@@ -13,11 +13,19 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from task_processor.handlers import (
+    _HANDLERS,
     get_handler,
     method_handler,
     register_handler,
     register_method_handlers,
 )
+
+
+@pytest.fixture(autouse=True)
+def reset_handlers():
+    """重置 _HANDLERS 以避免測試間互相影響。"""
+    _HANDLERS.clear()
+    yield
 
 
 @pytest.fixture
