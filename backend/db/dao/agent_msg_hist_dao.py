@@ -7,7 +7,7 @@ from typing import Optional
 
 from db.dao.base import BaseDAO
 from db.dto.agent_msg_hist import AgentMsgHistCreate
-from db.entity import AgentMsgHistEntity
+from db.entity import AgentEntity, AgentMsgHistEntity, SessionEntity
 
 
 class AgentMsgHistDAO(BaseDAO[AgentMsgHistEntity]):
@@ -167,15 +167,17 @@ class AgentMsgHistDAO(BaseDAO[AgentMsgHistEntity]):
         """列出指定 agent 未 LTM 總結的記錄。
 
         Args:
-            agent_id: Agent ID
+            agent_id: Agent ID（業務 ID，如 "agent-xxx"）
 
         Returns:
             未總結的記錄列表
         """
         stmt = (
             select(AgentMsgHistEntity)
+            .join(SessionEntity, AgentMsgHistEntity.session_id == SessionEntity.id)
+            .join(AgentEntity, SessionEntity.recv_agent_id == AgentEntity.id)
             .where(
-                AgentMsgHistEntity.agent_id == agent_id,
+                AgentEntity.agent_id == agent_id,
                 AgentMsgHistEntity.is_ltm_summary == False,  # noqa: E712
             )
             .order_by(AgentMsgHistEntity.session_id, AgentMsgHistEntity.create_dt)
