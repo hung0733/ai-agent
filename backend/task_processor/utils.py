@@ -1,8 +1,11 @@
-"""TaskProcessor utilities."""
+"""TaskProcessor 工具函數模組。
+
+提供重試 delay 計算、時間處理等共用工具函數。
+"""
 
 from __future__ import annotations
 
-_RETRY_DELAYS = [60, 300, 600, 1800, 3600]
+_RETRY_DELAYS = (60, 300, 600, 1800, 3600)
 
 
 def calculate_retry_delay(retry_count: int) -> int:
