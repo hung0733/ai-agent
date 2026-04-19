@@ -13,6 +13,7 @@ from pydantic import SecretStr
 
 from agent.prompt import apply_ltm_prompt_template, apply_stm_prompt_template
 from db.config import async_session_factory
+from db.dao.agent_dao import AgentDAO
 from db.dao.agent_msg_hist_dao import AgentMsgHistDAO
 from db.dao.long_term_mem_dao import LongTermMemDAO
 from db.dao.short_term_mem_dao import ShortTermMemDAO
@@ -144,8 +145,15 @@ async def review_ltm(agent_id: str) -> dict:
     all_memories: list[dict] = []
 
     async with async_session_factory() as session:
+        agent_dao = AgentDAO(session)
         hist_dao = AgentMsgHistDAO(session)
         ltm_dao = LongTermMemDAO(session)
+
+        # 查詢 agent 的 DB id（業務 agent_id → 整數主鍵）
+        agent_entity = await agent_dao.get_by_agent_id(agent_id)
+        if not agent_entity:
+            raise ValueError(_("找不到 agent: %s") % agent_id)
+        agent_db_id = agent_entity.id
 
         # Step 1: 查詢未總結的記錄
         records = await hist_dao.list_unsummarized_for_ltm(agent_id)
@@ -170,7 +178,7 @@ async def review_ltm(agent_id: str) -> dict:
 
                 for batch in batches:
                     batch_memories = await _process_ltm_batch(
-                        agent_id=agent_id,
+                        agent_id=agent_db_id,
                         batch_records=batch,
                         ltm_dao=ltm_dao,
                         qdrant_client=qdrant_client,
