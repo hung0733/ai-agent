@@ -7,16 +7,18 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "backend"))
 
-import asyncio
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from typing import Optional
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from db.dao.task_dao import TaskDAO
 from db.entity import AgentEntity, TaskEntity
 
 
-def _make_task(status="pending", next_process_dt=None):
+def _make_task(status: str = "pending", next_process_dt: Optional[datetime] = None) -> MagicMock:
+    """建立 mock task。"""
     task = MagicMock(spec=TaskEntity)
     task.id = 1
     task.status = status
@@ -27,7 +29,8 @@ def _make_task(status="pending", next_process_dt=None):
     return task
 
 
-def _make_agent(status="idle"):
+def _make_agent(status: str = "idle") -> MagicMock:
+    """建立 mock agent。"""
     agent = MagicMock(spec=AgentEntity)
     agent.id = 100
     agent.agent_id = "test-agent-001"
@@ -37,8 +40,6 @@ def _make_agent(status="idle"):
 
 @pytest.mark.asyncio
 async def test_get_next_pending_task_returns_task_and_agent():
-    from db.dao.task_dao import TaskDAO
-
     task = _make_task()
     agent = _make_agent()
 
@@ -60,8 +61,6 @@ async def test_get_next_pending_task_returns_task_and_agent():
 
 @pytest.mark.asyncio
 async def test_get_next_pending_task_returns_none_when_no_results():
-    from db.dao.task_dao import TaskDAO
-
     mock_result = MagicMock()
     mock_result.first.return_value = None
 
