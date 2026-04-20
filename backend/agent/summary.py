@@ -53,10 +53,14 @@ async def _get_embedding(text: str) -> list[float]:
         response.raise_for_status()
         data = response.json()
 
-    # llama.cpp 返回格式：[{"index": 0, "embedding": [...]}]
+    # llama.cpp 返回格式：[{"index": 0, "embedding": [[...]]}]（嵌套數組）
     # 或 OpenAI 格式：{"data": [{"embedding": [...]}]}
     if isinstance(data, list):
-        return data[0]["embedding"]
+        embedding = data[0]["embedding"]
+        # llama.cpp 可能返回嵌套數組 [[...]]，需要展平
+        if embedding and isinstance(embedding[0], list):
+            return embedding[0]
+        return embedding
     elif isinstance(data, dict) and "data" in data:
         return data["data"][0]["embedding"]
     else:
