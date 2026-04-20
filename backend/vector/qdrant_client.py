@@ -137,6 +137,8 @@ class QdrantClient:
         query_vector: List[float],
         top_k: int = 25,
         agent_id: Optional[int] = None,
+        wing: Optional[str] = None,
+        room: Optional[str] = None,
     ) -> List[Any]:
         """語義搜索（向量相似度）。
 
@@ -144,20 +146,36 @@ class QdrantClient:
             query_vector: 查詢向量
             top_k: 返回結果數量
             agent_id: 過濾特定 agent（可選）
+            wing: 領域過濾（可選）
+            room: 主題過濾（可選）
 
         Returns:
             搜索結果列表
         """
-        query_filter = None
+        conditions = []
         if agent_id is not None:
-            query_filter = models.Filter(
-                must=[
-                    models.FieldCondition(
-                        key="agent_id",
-                        match=models.MatchValue(value=agent_id),
-                    )
-                ]
+            conditions.append(
+                models.FieldCondition(
+                    key="agent_id",
+                    match=models.MatchValue(value=agent_id),
+                )
             )
+        if wing is not None:
+            conditions.append(
+                models.FieldCondition(
+                    key="wing",
+                    match=models.MatchValue(value=wing),
+                )
+            )
+        if room is not None:
+            conditions.append(
+                models.FieldCondition(
+                    key="room",
+                    match=models.MatchValue(value=room),
+                )
+            )
+
+        query_filter = models.Filter(must=conditions) if conditions else None
 
         try:
             results = await self.client.query_points(
@@ -176,6 +194,8 @@ class QdrantClient:
         keyword: str,
         top_k: int = 5,
         agent_id: Optional[int] = None,
+        wing: Optional[str] = None,
+        room: Optional[str] = None,
     ) -> List[Any]:
         """關鍵字搜索（BM25）。
 
@@ -183,56 +203,25 @@ class QdrantClient:
             keyword: 搜索關鍵字
             top_k: 返回結果數量
             agent_id: 過濾特定 agent（可選）
+            wing: 領域過濾（可選）
+            room: 主題過濾（可選）
 
         Returns:
             搜索結果列表
         """
-        query_filter = models.Filter(
-            must=[
-                models.FieldCondition(
-                    key="keywords",
-                    match=models.MatchText(text=keyword),
-                )
-            ]
-        )
+        conditions = [
+            models.FieldCondition(
+                key="keywords",
+                match=models.MatchText(text=keyword),
+            )
+        ]
         if agent_id is not None:
-            query_filter.must.append(
+            conditions.append(
                 models.FieldCondition(
                     key="agent_id",
                     match=models.MatchValue(value=agent_id),
                 )
             )
-
-        try:
-            results = await self.client.query_points(
-                collection_name=self.collection_name,
-                query_filter=query_filter,
-                limit=top_k,
-            )
-        except Exception as exc:
-            logger.error(_("Qdrant 關鍵字搜索失敗：%s"), exc)
-            raise
-        return results.points
-
-    async def search_structured(
-        self,
-        wing: Optional[str] = None,
-        room: Optional[str] = None,
-        agent_id: Optional[int] = None,
-        top_k: int = 5,
-    ) -> List[Any]:
-        """结构化搜索（metadata 過濾）。
-
-        Args:
-            wing: 領域過濾（可選）
-            room: 主題過濾（可選）
-            agent_id: 過濾特定 agent（可選）
-            top_k: 返回結果數量
-
-        Returns:
-            搜索結果列表。若未提供任何過濾條件則返回空列表。
-        """
-        conditions = []
         if wing is not None:
             conditions.append(
                 models.FieldCondition(
@@ -247,16 +236,6 @@ class QdrantClient:
                     match=models.MatchValue(value=room),
                 )
             )
-        if agent_id is not None:
-            conditions.append(
-                models.FieldCondition(
-                    key="agent_id",
-                    match=models.MatchValue(value=agent_id),
-                )
-            )
-
-        if not conditions:
-            return []
 
         query_filter = models.Filter(must=conditions)
 
@@ -267,6 +246,6 @@ class QdrantClient:
                 limit=top_k,
             )
         except Exception as exc:
-            logger.error(_("Qdrant 结构化搜索失敗：%s"), exc)
+            logger.error(_("Qdrant 關鍵字搜索失敗：%s"), exc)
             raise
         return results.points

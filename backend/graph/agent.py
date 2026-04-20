@@ -1,6 +1,4 @@
-import json
 import logging
-import os
 from datetime import datetime
 from typing import Any, Dict
 
@@ -26,54 +24,6 @@ SUMMARY_USAGE_TOKEN: int = 5000
 
 class AgentState(MessagesState):
     summary: str
-
-
-def _get_embedding_model():
-    """獲取 embedding 模型。"""
-    from langchain_openai import OpenAIEmbeddings
-
-    return OpenAIEmbeddings(
-        openai_api_base=os.getenv("EMBEDDING_LLM_ENDPOINT"),
-        openai_api_key=os.getenv("EMBEDDING_LLM_API_KEY", ""),
-        model=os.getenv("EMBEDDING_LLM_MODEL", "text-embedding-3-small"),
-        dimensions=int(os.getenv("EMBEDDING_DIMENSION", "2560")),
-    )
-
-
-def _get_routing_llm():
-    """獲取 ROUTING_LLM 用於查詢重寫。"""
-    from langchain_openai import ChatOpenAI
-
-    return ChatOpenAI(
-        openai_api_base=os.getenv("ROUTING_LLM_ENDPOINT"),
-        openai_api_key=os.getenv("ROUTING_LLM_API_KEY", ""),
-        model=os.getenv("ROUTING_LLM_MODEL", "qwen3.5-4b"),
-        temperature=0,
-    )
-
-
-async def _get_existing_taxonomy_by_agent(agent_id: int) -> str:
-    """從 PostgreSQL long_term_mem 表獲取指定 agent 的現有 wing/room 分類。
-
-    Returns:
-        JSON 字符串：{"Personal": ["Health", "Hobbies"], "Project": ["Database", ...]}
-    """
-    from db.config import async_session_factory
-    from db.dao.long_term_mem_dao import LongTermMemDAO
-
-    async with async_session_factory() as session:
-        dao = LongTermMemDAO(session)
-        memories = await dao.list_by_agent(agent_id, limit=1000)
-
-    taxonomy: Dict[str, set] = {}
-    for mem in memories:
-        wing = mem.wing or "Unknown"
-        room = mem.room or "Unknown"
-        if wing not in taxonomy:
-            taxonomy[wing] = set()
-        taxonomy[wing].add(room)
-
-    return json.dumps({k: sorted(list(v)) for k, v in taxonomy.items()})
 
 
 async def chat_node(state: AgentState, config: RunnableConfig):
@@ -116,79 +66,15 @@ async def chat_node(state: AgentState, config: RunnableConfig):
 
     # LTM Search - 每次 human message 都檢索
     last_message: BaseMessage = state["messages"][-1]
+    ltm_json_content: str = ""
     if session_db_id is not None and isinstance(last_message, HumanMessage):
         try:
-            from backend.agent.ltm_search import format_ltm_results_as_json, search_ltm
-            from backend.agent.prompt import LTM_QUERY_REWRITE_PROMPT_TEMPLATE
-            from backend.vector.qdrant_client import QdrantClient
-            from db.dao.session_dao import SessionDAO
+            from backend.agent.ltm_search import search_ltm_for_chat
 
-            async with async_session_factory() as db_session:
-                session_dao = SessionDAO(db_session)
-                session = await session_dao.get_by_id(session_db_id)
-                if session:
-                    agent_id = session.recv_agent_id
-
-                    # 1. 獲取 ROUTING_LLM 並重寫查詢
-                    routing_llm = _get_routing_llm()
-                    qdrant_client = QdrantClient()
-                    await qdrant_client.ensure_collection(
-                        vector_size=int(os.getenv("EMBEDDING_DIMENSION", "2560"))
-                    )
-
-                    # 從 PostgreSQL 獲取現有 taxonomy
-                    existing_taxonomy = await _get_existing_taxonomy_by_agent(agent_id)
-                    rewrite_prompt = LTM_QUERY_REWRITE_PROMPT_TEMPLATE.format(
-                        existing_taxonomy_json=existing_taxonomy,
-                        user_query=last_message.content,
-                    )
-
-                    rewrite_response = await routing_llm.ainvoke(rewrite_prompt)
-                    rewrite_content = rewrite_response.content
-                    # 清理可能的 markdown 代碼塊
-                    if rewrite_content.startswith("```"):
-                        rewrite_content = rewrite_content.split("```")[1]
-                        if rewrite_content.startswith("json"):
-                            rewrite_content = rewrite_content[4:]
-                    rewrite_content = rewrite_content.strip()
-
-                    query_params = json.loads(rewrite_content)
-
-                    domain_wing = query_params.get("domain_wing")
-                    topic_room = query_params.get("topic_room")
-                    keywords = query_params.get("keywords", [])
-
-                    # 如果 room 是 "ANY"，設為 None（擴大搜索）
-                    if topic_room == "ANY":
-                        topic_room = None
-
-                    # 2. 用 keywords 生成 embedding
-                    embedding_model = _get_embedding_model()
-                    query_embedding = await embedding_model.aembed_query(" ".join(keywords))
-
-                    # 3. 搜索 LTM（傳入 wing/room/agent_id）
-                    ltm_results_text, ltm_points = await search_ltm(
-                        query=" ".join(keywords),
-                        agent_id=agent_id,
-                        qdrant_client=qdrant_client,
-                        query_vector=query_embedding,
-                        wing=domain_wing,
-                        room=topic_room,
-                        semantic_top_k=5,
-                        keyword_top_k=5,
-                        structured_top_k=5,
-                    )
-
-                    # 4. 格式化為 JSON 並插入消息
-                    if ltm_points:
-                        ltm_json_list = format_ltm_results_as_json(ltm_points)
-                        for ltm_item in ltm_json_list[:5]:
-                            ltm_content = json.dumps(ltm_item, ensure_ascii=False, indent=2)
-                            messages_to_send.append(
-                                AIMessage(
-                                    content=_("長期記憶檢索結果：\n{}").format(ltm_content)
-                                )
-                            )
+            ltm_json_content = await search_ltm_for_chat(
+                user_query=last_message.content,
+                session_db_id=session_db_id,
+            )
         except Exception as exc:
             logger.warning(_("LTM 檢索失敗，跳過：%s"), exc)
 
@@ -216,6 +102,14 @@ async def chat_node(state: AgentState, config: RunnableConfig):
         content=f"當前系統時間 (Current Datetime): {datetime.now().strftime('%Y-%m-%d %H:%M')}"
     )
     messages_to_send.append(current_datetime_msg)
+
+    # 在日期時間之後、last_message 之前加入 LTM 結果（單個 JSON array 消息）
+    if ltm_json_content:
+        messages_to_send.append(
+            AIMessage(
+                content=_("長期記憶檢索結果：\n{}").format(ltm_json_content)
+            )
+        )
 
     # 最后加入 last_message
     messages_to_send.append(last_message)

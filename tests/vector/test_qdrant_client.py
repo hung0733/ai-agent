@@ -162,65 +162,6 @@ async def test_search_keyword_with_agent_id():
 
 
 @pytest.mark.asyncio
-async def test_search_structured_with_wing():
-    """測試帶 wing 過濾的结构化搜索。"""
-    from backend.vector.qdrant_client import QdrantClient
-
-    mock_client = AsyncMock()
-    mock_results = [
-        MagicMock(
-            id=3,
-            payload={"wing": "Personal", "content": "Test"},
-        )
-    ]
-    mock_client.query_points.return_value.points = mock_results
-
-    client = QdrantClient.__new__(QdrantClient)
-    client.client = mock_client
-    client.collection_name = "test_collection"
-
-    results = await client.search_structured(wing="Personal", top_k=5)
-    assert len(results) == 1
-    assert results[0].payload["wing"] == "Personal"
-
-
-@pytest.mark.asyncio
-async def test_search_structured_with_multiple_filters():
-    """測試帶多個過濾條件的结构化搜索。"""
-    from backend.vector.qdrant_client import QdrantClient
-
-    mock_client = AsyncMock()
-    mock_client.query_points.return_value.points = []
-
-    client = QdrantClient.__new__(QdrantClient)
-    client.client = mock_client
-    client.collection_name = "test_collection"
-
-    results = await client.search_structured(
-        wing="Personal", room="Health", agent_id=1, top_k=10,
-    )
-    assert len(results) == 0
-    call_kwargs = mock_client.query_points.call_args[1]
-    assert call_kwargs["limit"] == 10
-
-
-@pytest.mark.asyncio
-async def test_search_structured_no_conditions_returns_empty():
-    """測試未提供任何過濾條件時返回空列表。"""
-    from backend.vector.qdrant_client import QdrantClient
-
-    mock_client = AsyncMock()
-
-    client = QdrantClient.__new__(QdrantClient)
-    client.client = mock_client
-    client.collection_name = "test_collection"
-
-    results = await client.search_structured()
-    assert results == []
-    mock_client.query_points.assert_not_called()
-
-
-@pytest.mark.asyncio
 async def test_upsert_points_checks_status():
     """測試 upsert_points 檢查返回狀態。"""
     from backend.vector.qdrant_client import QdrantClient

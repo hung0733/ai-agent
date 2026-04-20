@@ -20,7 +20,6 @@ async def test_search_ltm_no_results():
     mock_client = AsyncMock()
     mock_client.search_semantic.return_value = []
     mock_client.search_keyword.return_value = []
-    mock_client.search_structured.return_value = []
 
     result_text, result_points = await search_ltm("test query", agent_id=1, qdrant_client=mock_client)
     assert result_text == ""
@@ -44,7 +43,6 @@ async def test_search_ltm_with_results():
     mock_client = AsyncMock()
     mock_client.search_semantic.return_value = [mock_point]
     mock_client.search_keyword.return_value = []
-    mock_client.search_structured.return_value = []
 
     result_text, result_points = await search_ltm("running", agent_id=1, qdrant_client=mock_client)
     assert "Personal" in result_text
@@ -69,9 +67,8 @@ async def test_search_ltm_with_wing_room():
     }
 
     mock_client = AsyncMock()
-    mock_client.search_semantic.return_value = []
+    mock_client.search_semantic.return_value = [mock_point]
     mock_client.search_keyword.return_value = []
-    mock_client.search_structured.return_value = [mock_point]
 
     result_text, result_points = await search_ltm(
         "database",
@@ -170,7 +167,7 @@ async def test_merge_and_deduplicate():
     point2 = MagicMock(id="uuid-2", payload={"content": "B"})
     point3 = MagicMock(id="uuid-1", payload={"content": "A duplicate"})
 
-    merged = _merge_and_deduplicate([point1], [point2], [point3])
+    merged = _merge_and_deduplicate([point1], [point2])
     assert len(merged) == 2
     assert merged[0].id == "uuid-1"
     assert merged[1].id == "uuid-2"
