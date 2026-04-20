@@ -397,10 +397,8 @@ async def _process_ltm_batch(
 
             embedding = await _get_embedding(restatement)
             # Qdrant 只接受 unsigned int 或 UUID 作為 point ID
-            point_id = f"{agent_id}-{record_dt.strftime('%Y%m%d%H%M%S')}-{Tools.get_token_count(restatement)}"
-            # 將 point_id 轉為 UUID 格式
             import uuid
-            point_uuid = str(uuid.uuid5(uuid.NAMESPACE_OID, point_id))
+            point_uuid = str(uuid.uuid4())
             qdrant_points.append({
                 "id": point_uuid,
                 "vector": embedding,
