@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import logging
-from typing import Any, List
+from typing import Any, Dict, List, Tuple
 
 from i18n import _
 
@@ -15,10 +16,12 @@ async def search_ltm(
     agent_id: int,
     qdrant_client: Any,
     query_vector: List[float] | None = None,
+    wing: str | None = None,
+    room: str | None = None,
     semantic_top_k: int = 25,
     keyword_top_k: int = 5,
     structured_top_k: int = 5,
-) -> str:
+) -> Tuple[str, List[Any]]:
     """搜索長期記憶。
 
     使用混合搜索策略：語義 + 關鍵字 + 結構化。
@@ -28,12 +31,14 @@ async def search_ltm(
         agent_id: Agent ID
         qdrant_client: Qdrant 客戶端
         query_vector: 查詢向量（用於語義搜索）
+        wing: 領域過濾（可選）
+        room: 主題過濾（可選）
         semantic_top_k: 語義搜索返回數量
         keyword_top_k: 關鍵字搜索返回數量
         structured_top_k: 結構化搜索返回數量
 
     Returns:
-        格式化的 LTM 內容字符串
+        (格式化的 LTM 內容字符串, 原始結果列表)
     """
     try:
         semantic_results = await qdrant_client.search_semantic(
@@ -49,6 +54,8 @@ async def search_ltm(
         )
 
         structured_results = await qdrant_client.search_structured(
+            wing=wing,
+            room=room,
             agent_id=agent_id,
             top_k=structured_top_k,
         )
@@ -59,14 +66,14 @@ async def search_ltm(
 
         if not all_results:
             logger.debug(_("無 LTM 搜索結果，agent_id=%s"), agent_id)
-            return ""
+            return "", []
 
         logger.info(_("找到 %s 條 LTM 相關記憶，agent_id=%s"), len(all_results), agent_id)
-        return format_ltm_results(all_results)
+        return format_ltm_results(all_results), all_results
 
     except Exception as exc:
         logger.error(_("LTM 搜索失敗：%s"), exc)
-        return ""
+        return "", []
 
 
 def _merge_and_deduplicate(
@@ -115,3 +122,25 @@ def format_ltm_results(points: List[Any]) -> str:
             lines.append(_("   Keywords: %s") % ', '.join(keywords))
 
     return "\n".join(lines)
+
+
+def format_ltm_results_as_json(points: List[Any]) -> List[Dict[str, str]]:
+    """格式化 LTM 搜索結果為 JSON 列表。
+
+    Args:
+        points: 搜索結果列表
+
+    Returns:
+        [{"content": "...", "sendDatetime": "2026-04-17T10:00:00"}, ...]
+    """
+    results = []
+    for point in points:
+        payload = point.payload
+        content = payload.get("content", "")
+        send_datetime = payload.get("create_dt") or payload.get("record_dt", "")
+        if content:
+            results.append({
+                "content": content,
+                "sendDatetime": str(send_datetime),
+            })
+    return results

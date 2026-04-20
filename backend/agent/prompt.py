@@ -127,6 +127,7 @@ LTM_PROMPT_TEMPLATE = """[角色設定]
 7. 拒絕原始碼 (No Raw Code)：絕對禁止在記憶中記錄任何具體的程式碼片段 (Source Code)。針對程式開發的對話，必須將其抽象化為「修改日誌 (Changelog)」，只記錄「修改了什麼邏輯」、「修復了什麼 Bug」、「引入了什麼新技術」或「架構上的決策」。
    - ❌ 錯誤寫法："User added `async def fetch_data(): await db.execute('SELECT * FROM users')` to the dao."
    - ✅ 正確寫法："User implemented async database fetching logic for users on 2026-04-14."
+8. 強制英文輸出 (English ONLY) ⚠️ 極度重要：無論用戶輸入的是廣東話、繁體中文還是其他語言，你輸出的 JSON 內容（特別是 `lossless_restatement` 和 `keywords` 欄位）必須 100% 翻譯並轉換為「純英文」。絕對禁止在 JSON Value 中輸出任何中文字。
 
 [用戶對話紀錄 Transcript]
 以下係 JSON 格式嘅對話記錄：
@@ -157,7 +158,7 @@ STM_PROMPT_TEMPLATE = """[角色設定]
 1. 全面覆蓋 (Complete Coverage)：產生足夠數量的記憶條目，確保對話中的「所有」關鍵資訊及細節均被妥善捕捉。
 2. 強制消除歧義 (Force Disambiguation)：絕對禁止使用代名詞 (例如：他、她、它、他們、這個、那個) 以及相對時間 (例如：昨日、今日、上星期、明日)。必須利用 [當前系統時間] 推算，並替換為具體人名、確實事物名稱或絕對時間 (YYYY-MM-DD)。
 3. 無損資訊 (Lossless Information)：每一條記憶的重述必須是一個完整、獨立且語意清晰的句子。確保該句子即使完全脫離上下文，也能被獨立理解。
-7. 拒絕原始碼 (No Raw Code)：絕對禁止在記憶中記錄任何具體的程式碼片段 (Source Code)。針對程式開發的對話，必須將其抽象化為「修改日誌 (Changelog)」，只記錄「修改了什麼邏輯」、「修復了什麼 Bug」、「引入了什麼新技術」或「架構上的決策」。
+4. 拒絕原始碼 (No Raw Code)：絕對禁止在記憶中記錄任何具體的程式碼片段 (Source Code)。針對程式開發的對話，必須將其抽象化為「修改日誌 (Changelog)」，只記錄「修改了什麼邏輯」、「修復了什麼 Bug」、「引入了什麼新技術」或「架構上的決策」。
    - ❌ 錯誤寫法："User added `async def fetch_data(): await db.execute('SELECT * FROM users')` to the dao."
    - ✅ 正確寫法："User implemented async database fetching logic for users on 2026-04-14."
 
@@ -202,3 +203,35 @@ async def apply_ltm_prompt_template(
         existing_taxonomy_json=existing_taxonomy_json,
         current_timestamp=datetime.now().strftime("%Y-%m-%d %H:%M"),
     )
+
+
+LTM_QUERY_REWRITE_PROMPT_TEMPLATE = """[角色設定]
+你是「大腦檢索導航員 (Memory Navigator)」。
+你的任務是分析用戶當前的口語化提問，將其轉化為精準的「空間檢索參數 (Spatial Search Query)」，以便系統在長期記憶庫 (LTM) 中快速尋找答案。
+
+[現有記憶宮殿地圖]
+以下是目前長期記憶庫中已存在的分類地圖：
+{existing_taxonomy_json}
+
+[檢索策略守則]
+1. 意圖分析：精準理解用戶想回憶或查詢的核心事物是什麼。
+2. 提取關鍵字 (Keywords)：將口語化的問題，提煉為 3-5 個高資訊密度的搜索關鍵字。
+   - 必須去除無意義的口語字眼 (例如: "我想知", "尋日", "點樣", "幫我諗下")。
+   - 優先翻譯/提煉成專業術語、英文專有名詞 (例如用戶問「資料庫」，請提煉出 "Database")。
+3. 鎖定 Wing (領域)：嚴格從現有的 `domain_wing` 中選擇最吻合的一個。
+4. 鎖定 Room (房間) - ⚠️ 極度重要：
+   - 如果用戶的問題非常明確對應地圖中的某個 Room，請填寫該 Room 的名稱 (需大小寫完全吻合)。
+   - 擴大搜索防禦機制：如果用戶的問題很模糊，或者你不確定屬於哪個房間，請務必填寫 "ANY"。絕對禁止在此步驟「發明」新的房間，因為你正在執行「檢索 (Search)」而非「儲存 (Store)」。
+5. 強制英文輸出 (English ONLY) ⚠️ 極度重要：無論用戶輸入的是廣東話、繁體中文還是其他語言，你輸出的 JSON 內容必須 100% 翻譯並轉換為「純英文」。絕對禁止在 JSON Value 中輸出任何中文字。
+
+[用戶當前提問]
+{user_query}
+
+[輸出 JSON 格式要求]
+你必須輸出一個 JSON Object，絕對不能包含其他多餘的文字：
+{{
+  "domain_wing": "Project",
+  "topic_room": "Database", 
+  "keywords": ["LTM", "PostgreSQL", "SQLite", "Architecture"]
+}}
+"""
