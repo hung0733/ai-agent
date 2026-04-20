@@ -109,7 +109,7 @@ LTM_PROMPT_TEMPLATE = """[角色設定]
 記憶宮殿分為兩層：
 1. Wing (領域側翼)：宏觀分類。必須嚴格從以下選項中選擇：
    - "Personal" (個人生活、喜好、習慣、健康)
-   - "Project_JARVIS" (與本系統開發、架構、編程相關)
+   - "Project" (與本系統開發、架構、編程相關)
    - "Work_Business" (用戶的工作、事業、商業點子)
    - "General_Knowledge" (有保留價值的客觀事實)
    
@@ -137,7 +137,7 @@ LTM_PROMPT_TEMPLATE = """[角色設定]
 {{
   "memories": [
     {{
-      "domain_wing": "Project_JARVIS",
+      "domain_wing": "Project",
       "topic_room": "Database",
       "lossless_restatement": "User fixed a concurrency bug in the connection pool logic.",
       "keywords": ["Bug fix", "Concurrency", "Connection pool"],
