@@ -396,8 +396,13 @@ async def _process_ltm_batch(
             await ltm_dao.create_from_dto(dto)
 
             embedding = await _get_embedding(restatement)
+            # Qdrant 只接受 unsigned int 或 UUID 作為 point ID
+            point_id = f"{agent_id}-{record_dt.strftime('%Y%m%d%H%M%S')}-{Tools.get_token_count(restatement)}"
+            # 將 point_id 轉為 UUID 格式
+            import uuid
+            point_uuid = str(uuid.uuid5(uuid.NAMESPACE_OID, point_id))
             qdrant_points.append({
-                "id": f"ltm_{agent_id}_{record_dt.isoformat()}_{Tools.get_token_count(restatement)}",
+                "id": point_uuid,
                 "vector": embedding,
                 "payload": {
                     "agent_id": agent_id,
