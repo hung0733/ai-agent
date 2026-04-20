@@ -25,6 +25,44 @@ from i18n import _
 logger = logging.getLogger(__name__)
 
 
+async def _get_embedding(text: str) -> list[float]:
+    """獲取文本的向量表示。
+
+    直接調用 llama.cpp 的 embedding 端點，處理其返回格式（list 而非 OpenAI 的 dict）。
+
+    Args:
+        text: 要嵌入的文本
+
+    Returns:
+        向量列表
+    """
+    import httpx
+
+    endpoint = os.getenv("EMBEDDING_LLM_ENDPOINT", "http://localhost:8605")
+    api_key = os.getenv("EMBEDDING_LLM_API_KEY", "")
+    model = os.getenv("EMBEDDING_LLM_MODEL", "text-embedding-3-small")
+    dimension = int(os.getenv("EMBEDDING_DIMENSION", "2560"))
+
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            f"{endpoint}/embeddings",
+            json={"input": text, "model": model},
+            headers={"Authorization": f"Bearer {api_key}"} if api_key else {},
+            timeout=30.0,
+        )
+        response.raise_for_status()
+        data = response.json()
+
+    # llama.cpp 返回格式：[{"index": 0, "embedding": [...]}]
+    # 或 OpenAI 格式：{"data": [{"embedding": [...]}]}
+    if isinstance(data, list):
+        return data[0]["embedding"]
+    elif isinstance(data, dict) and "data" in data:
+        return data["data"][0]["embedding"]
+    else:
+        raise ValueError(_("無法解析 embedding 回應格式"))
+
+
 def group_records_by_human(records: list) -> list[list]:
     """按 Human 訊息分組記錄。
 
@@ -324,15 +362,6 @@ async def _process_ltm_batch(
             logger.debug(_("LLM 未返回任何 memories"))
             return []
 
-        from langchain_openai import OpenAIEmbeddings
-
-        embedding_model = OpenAIEmbeddings(
-            openai_api_base=os.getenv("EMBEDDING_LLM_ENDPOINT"),
-            openai_api_key=os.getenv("EMBEDDING_LLM_API_KEY", ""),
-            model=os.getenv("EMBEDDING_LLM_MODEL", "text-embedding-3-small"),
-            dimensions=int(os.getenv("EMBEDDING_DIMENSION", "2560")),
-        )
-
         now = datetime.now(timezone.utc)
         qdrant_points = []
         result_memories: list[dict] = []
@@ -366,7 +395,7 @@ async def _process_ltm_batch(
             )
             await ltm_dao.create_from_dto(dto)
 
-            embedding = await embedding_model.aembed_query(restatement)
+            embedding = await _get_embedding(restatement)
             qdrant_points.append({
                 "id": f"ltm_{agent_id}_{record_dt.isoformat()}_{Tools.get_token_count(restatement)}",
                 "vector": embedding,
