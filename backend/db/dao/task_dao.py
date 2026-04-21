@@ -84,3 +84,44 @@ class TaskDAO(BaseDAO[TaskEntity]):
         for key, value in update_data.items():
             setattr(entity, key, value)
         return await self.update(entity)
+
+    async def get_sub_tasks_by_parent(self, parent_task_id: int) -> list[TaskEntity]:
+        """獲取指定父任務的所有子任務（按 execution_order 排序）。"""
+        stmt = (
+            select(TaskEntity)
+            .where(TaskEntity.parent_task_id == parent_task_id)
+            .order_by(TaskEntity.execution_order, TaskEntity.id)
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def get_completed_sub_tasks(self, parent_task_id: int) -> list[TaskEntity]:
+        """獲取已完成嘅 sub-tasks。"""
+        stmt = (
+            select(TaskEntity)
+            .where(
+                TaskEntity.parent_task_id == parent_task_id,
+                TaskEntity.status == "completed",
+            )
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def get_failed_sub_tasks(self, parent_task_id: int) -> list[TaskEntity]:
+        """獲取失敗嘅 sub-tasks。"""
+        stmt = (
+            select(TaskEntity)
+            .where(
+                TaskEntity.parent_task_id == parent_task_id,
+                TaskEntity.status == "failed",
+            )
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def are_all_sub_tasks_completed(self, parent_task_id: int) -> bool:
+        """檢查所有 sub-tasks 是否已完成。"""
+        sub_tasks = await self.get_sub_tasks_by_parent(parent_task_id)
+        if not sub_tasks:
+            return False
+        return all(t.status == "completed" for t in sub_tasks)

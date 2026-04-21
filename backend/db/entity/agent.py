@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, Any
 
 if TYPE_CHECKING:
     from db.entity.task import TaskEntity
 
-from sqlalchemy import BigInteger, Boolean, ForeignKey, String
+from sqlalchemy import BigInteger, Boolean, ForeignKey, Integer, String
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from db.base import Base
@@ -24,6 +25,8 @@ class AgentEntity(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="idle")
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     llm_group_id: Mapped[Optional[int]] = mapped_column(BigInteger, ForeignKey("llm_group.id"))
+    capabilities: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, default=dict)
+    current_tasks: Mapped[int] = mapped_column(Integer, default=0)
 
     # Relationships
     user: Mapped["UserEntity"] = relationship("UserEntity", back_populates="agents")

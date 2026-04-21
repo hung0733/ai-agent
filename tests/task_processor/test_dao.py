@@ -71,3 +71,24 @@ async def test_get_next_pending_task_returns_none_when_no_results():
     result = await dao.get_next_pending_task()
 
     assert result is None
+
+
+@pytest.mark.asyncio
+async def test_agent_capabilities_field(mock_session):
+    """測試 AgentEntity 支援 capabilities JSONB 欄位。"""
+    from db.entity.agent import AgentEntity
+
+    agent = AgentEntity(
+        user_id=1,
+        agent_id="test-cap-agent-001",
+        name="Test Cap Agent",
+        capabilities={
+            "skills": ["web_search", "data_analysis"],
+            "max_concurrent_tasks": 3,
+        },
+        current_tasks=0,
+    )
+
+    assert agent.capabilities["skills"] == ["web_search", "data_analysis"]
+    assert agent.capabilities["max_concurrent_tasks"] == 3
+    assert agent.current_tasks == 0

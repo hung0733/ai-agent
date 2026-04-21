@@ -62,3 +62,31 @@ class AgentDAO(BaseDAO[AgentEntity]):
         for key, value in update_data.items():
             setattr(entity, key, value)
         return await self.update(entity)
+
+    async def get_agents_by_skill(self, skill: str) -> list[AgentEntity]:
+        """獲取具備指定技能的 agents。"""
+        stmt = select(AgentEntity).where(
+            AgentEntity.capabilities["skills"].contains([skill]),
+            AgentEntity.is_active == True,
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def get_idle_agents_by_skill(self, skill: str) -> list[AgentEntity]:
+        """獲取具備指定技能且 idle 的 agents。"""
+        stmt = select(AgentEntity).where(
+            AgentEntity.capabilities["skills"].contains([skill]),
+            AgentEntity.status == "idle",
+            AgentEntity.is_active == True,
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def get_available_agent(self, skill: str) -> Optional[AgentEntity]:
+        """獲取最佳可用 agent（idle + 最低負載）。"""
+        candidates = await self.get_idle_agents_by_skill(skill)
+        if not candidates:
+            return None
+
+        # 選擇 current_tasks 最少的 agent
+        return min(candidates, key=lambda a: a.current_tasks)

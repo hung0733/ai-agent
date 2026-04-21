@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, Any
 
 from pydantic import BaseModel, Field
 
@@ -16,6 +16,8 @@ class AgentCreate(BaseModel):
     status: str = "idle"
     is_active: bool = True
     llm_group_id: Optional[int] = None
+    capabilities: dict[str, Any] = Field(default_factory=dict)
+    current_tasks: int = 0
 
 
 class AgentUpdate(BaseModel):
@@ -23,6 +25,8 @@ class AgentUpdate(BaseModel):
     status: Optional[str] = Field(None, max_length=20)
     is_active: Optional[bool] = None
     llm_group_id: Optional[int] = None
+    capabilities: Optional[dict[str, Any]] = None
+    current_tasks: Optional[int] = None
 
 
 class AgentResponse(BaseModel):
@@ -33,6 +37,8 @@ class AgentResponse(BaseModel):
     status: str
     is_active: bool
     llm_group_id: Optional[int]
+    capabilities: dict[str, Any]
+    current_tasks: int
 
     @classmethod
     def from_entity(cls, entity: AgentEntity) -> "AgentResponse":
@@ -44,4 +50,6 @@ class AgentResponse(BaseModel):
             status=entity.status,
             is_active=entity.is_active,
             llm_group_id=entity.llm_group_id,
+            capabilities=entity.capabilities or {},
+            current_tasks=entity.current_tasks,
         )
