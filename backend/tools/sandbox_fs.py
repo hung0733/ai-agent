@@ -18,16 +18,19 @@ DEFAULT_BASE_DIR = "/mnt/data/misc/ai-agent/home"
 
 class SandboxSecurityError(Exception):
     """Raised when a path operation would escape the sandbox."""
+
     pass
 
 
 class SandboxFileNotFoundError(Exception):
     """Raised when a requested path does not exist."""
+
     pass
 
 
 class SandboxPermissionError(Exception):
     """Raised when an operation is not allowed on the target path."""
+
     pass
 
 
@@ -44,7 +47,7 @@ class SandboxFileSystem:
         self.real_base = Path(base_dir) / agent_id
         self.real_base.mkdir(parents=True, exist_ok=True)
 
-        for subdir in ("uploads", "workspace", "outputs"):
+        for subdir in ("uploads", "workspace", "outputs", "skills"):
             (self.real_base / subdir).mkdir(parents=True, exist_ok=True)
 
     def _resolve_path(self, virtual_path: str) -> Path:
@@ -69,7 +72,7 @@ class SandboxFileSystem:
                 _("路徑必須以 %s 開頭，但收到: %s") % (VIRTUAL_BASE, virtual_path)
             )
 
-        relative = virtual_path[len(VIRTUAL_BASE):].lstrip("/")
+        relative = virtual_path[len(VIRTUAL_BASE) :].lstrip("/")
         resolved = (self.real_base / relative).resolve()
 
         logger.debug(_("路徑解析: %s -> %s"), virtual_path, resolved)
@@ -80,9 +83,7 @@ class SandboxFileSystem:
                 virtual_path,
                 resolved,
             )
-            raise SandboxSecurityError(
-                _("路徑 %s 超出沙盒範圍") % virtual_path
-            )
+            raise SandboxSecurityError(_("路徑 %s 超出沙盒範圍") % virtual_path)
 
         return resolved
 
@@ -110,26 +111,23 @@ class SandboxFileSystem:
         Raises:
             SandboxPermissionError: 如果路徑唔允許寫入。
         """
-        uploads_dir = self.real_base / "uploads"
-        try:
-            resolved.relative_to(uploads_dir)
-            raise SandboxPermissionError(
-                _("/mnt/user-data/uploads 係唯讀目錄，唔允許寫入")
-            )
-        except ValueError:
-            pass
+        for ro_dir in ["uploads", "skills"]:
+            restricted_dir = self.real_base / ro_dir
+            try:
+                resolved.relative_to(restricted_dir)
+                raise SandboxPermissionError(
+                    _(f"/mnt/user-data/{ro_dir} 係唯讀目錄，唔允許寫入")
+                )
+            except ValueError:
+                pass
 
     async def read_file(self, path: str) -> str:
         """讀取檔案內容。"""
         resolved = self._resolve_path(path)
         if not resolved.exists():
-            raise SandboxFileNotFoundError(
-                _("檔案不存在: %s") % path
-            )
+            raise SandboxFileNotFoundError(_("檔案不存在: %s") % path)
         if not resolved.is_file():
-            raise SandboxPermissionError(
-                _("%s 係目錄，唔係檔案") % path
-            )
+            raise SandboxPermissionError(_("%s 係目錄，唔係檔案") % path)
         return await asyncio.to_thread(resolved.read_text, encoding="utf-8")
 
     async def write_file(self, path: str, content: str) -> str:
@@ -144,24 +142,22 @@ class SandboxFileSystem:
         """列出目錄內容。"""
         resolved = self._resolve_path(path)
         if not resolved.exists():
-            raise SandboxFileNotFoundError(
-                _("目錄不存在: %s") % path
-            )
+            raise SandboxFileNotFoundError(_("目錄不存在: %s") % path)
         if not resolved.is_dir():
-            raise SandboxPermissionError(
-                _("%s 係檔案，唔係目錄") % path
-            )
+            raise SandboxPermissionError(_("%s 係檔案，唔係目錄") % path)
 
         def _list_entries() -> List[Dict[str, Any]]:
             results = []
             for entry in sorted(resolved.iterdir()):
                 stat = entry.stat()
-                results.append({
-                    "name": entry.name,
-                    "type": "directory" if entry.is_dir() else "file",
-                    "size": stat.st_size if entry.is_file() else 0,
-                    "modified": stat.st_mtime,
-                })
+                results.append(
+                    {
+                        "name": entry.name,
+                        "type": "directory" if entry.is_dir() else "file",
+                        "size": stat.st_size if entry.is_file() else 0,
+                        "modified": stat.st_mtime,
+                    }
+                )
             return results
 
         return await asyncio.to_thread(_list_entries)
@@ -170,9 +166,7 @@ class SandboxFileSystem:
         """刪除檔案或目錄。"""
         resolved = self._resolve_path(path)
         if not resolved.exists():
-            raise SandboxFileNotFoundError(
-                _("路徑不存在: %s") % path
-            )
+            raise SandboxFileNotFoundError(_("路徑不存在: %s") % path)
         self._check_writable(resolved)
 
         if resolved.is_dir():
@@ -188,9 +182,7 @@ class SandboxFileSystem:
         dst_resolved = self._resolve_path(dst)
 
         if not src_resolved.exists():
-            raise SandboxFileNotFoundError(
-                _("來源不存在: %s") % src
-            )
+            raise SandboxFileNotFoundError(_("來源不存在: %s") % src)
         self._check_writable(dst_resolved)
 
         def _copy():
@@ -210,9 +202,7 @@ class SandboxFileSystem:
         dst_resolved = self._resolve_path(dst)
 
         if not src_resolved.exists():
-            raise SandboxFileNotFoundError(
-                _("來源不存在: %s") % src
-            )
+            raise SandboxFileNotFoundError(_("來源不存在: %s") % src)
         self._check_writable(src_resolved)
         self._check_writable(dst_resolved)
 
@@ -231,9 +221,7 @@ class SandboxFileSystem:
 
         resolved = self._resolve_path(path)
         if not resolved.exists():
-            raise SandboxFileNotFoundError(
-                _("路徑不存在: %s") % path
-            )
+            raise SandboxFileNotFoundError(_("路徑不存在: %s") % path)
 
         def _search() -> List[Dict[str, Any]]:
             results = []
@@ -243,15 +231,17 @@ class SandboxFileSystem:
                     rel = file_path.relative_to(self.real_base)
                     virtual_file_path = f"{VIRTUAL_BASE}/{rel}"
 
-                    name_match = (
-                        not name_pattern or fnmatch.fnmatch(filename, name_pattern)
+                    name_match = not name_pattern or fnmatch.fnmatch(
+                        filename, name_pattern
                     )
                     content_match = False
                     snippet = ""
 
                     if content_query and name_match:
                         try:
-                            content = file_path.read_text(encoding="utf-8", errors="ignore")
+                            content = file_path.read_text(
+                                encoding="utf-8", errors="ignore"
+                            )
                             if content_query.lower() in content.lower():
                                 content_match = True
                                 idx = content.lower().index(content_query.lower())
@@ -262,17 +252,21 @@ class SandboxFileSystem:
                             continue
 
                     if name_match and not content_query:
-                        results.append({
-                            "path": virtual_file_path,
-                            "match_type": "name",
-                            "snippet": "",
-                        })
+                        results.append(
+                            {
+                                "path": virtual_file_path,
+                                "match_type": "name",
+                                "snippet": "",
+                            }
+                        )
                     elif content_match:
-                        results.append({
-                            "path": virtual_file_path,
-                            "match_type": "content",
-                            "snippet": snippet,
-                        })
+                        results.append(
+                            {
+                                "path": virtual_file_path,
+                                "match_type": "content",
+                                "snippet": snippet,
+                            }
+                        )
 
             return results
 
@@ -296,9 +290,7 @@ class SandboxFileSystem:
             )
 
         if not resolved.exists():
-            raise SandboxFileNotFoundError(
-                _("腳本不存在: %s") % path
-            )
+            raise SandboxFileNotFoundError(_("腳本不存在: %s") % path)
 
         cmd = [str(resolved)]
         if args:
@@ -311,9 +303,7 @@ class SandboxFileSystem:
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(workspace_dir),
             )
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout
-            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
             output = stdout.decode("utf-8", errors="replace")
             if stderr:
                 output += stderr.decode("utf-8", errors="replace")
@@ -325,9 +315,7 @@ class SandboxFileSystem:
                 pass
             return _("腳本執行超時 (%d 秒)") % timeout
         except PermissionError as e:
-            raise SandboxPermissionError(
-                _("腳本執行權限被拒: %s") % str(e)
-            ) from e
+            raise SandboxPermissionError(_("腳本執行權限被拒: %s") % str(e)) from e
         except FileNotFoundError as e:
             raise SandboxFileNotFoundError(
                 _("腳本執行失敗，解釋器不存在: %s") % str(e)

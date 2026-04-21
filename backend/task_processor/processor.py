@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import timedelta
-from typing import Optional
+from typing import Any, Optional
 
 from db.config import async_session_factory
 from db.dao.agent_dao import AgentDAO
@@ -91,9 +91,8 @@ class TaskProcessor:
 
         task_ref = asyncio.create_task(self._process_task_with_semaphore(task, agent))
         task_ref.add_done_callback(
-            lambda t: t.exception() and logger.error(
-                _("Background task 執行錯誤：%s"), t.exception()
-            )
+            lambda t: t.exception()
+            and logger.error(_("Background task 執行錯誤：%s"), t.exception())
         )
 
     async def _process_task_with_semaphore(
@@ -147,6 +146,12 @@ class TaskProcessor:
                 fresh_task.status = "completed"
                 fresh_task.error_message = None
 
+                # 🌟 新增：觸發依賴解鎖邏輯
+                if fresh_task.parent_task_id:
+                    await self._check_and_unlock_next_order(
+                        fresh_task.parent_task_id, session
+                    )
+
             except Exception as exc:
                 logger.error(_("Task %s 失敗：%s"), fresh_task.id, exc)
                 await self._handle_task_failure(fresh_task, exc)
@@ -158,6 +163,66 @@ class TaskProcessor:
                     _("Agent %s 已重置為 idle"),
                     fresh_agent.agent_id,
                 )
+
+    async def _check_and_unlock_next_order(
+        self, parent_task_id: int, session: Any
+    ) -> None:
+        """
+        檢查同一個 parent_task_id 下，當前 execution_order 嘅任務係咪全部做完。
+        係嘅話，解鎖下一個 execution_order (由 blocked 轉為 pending)。
+        """
+        from db.dao.task_dao import TaskDAO
+
+        task_dao = TaskDAO(session)
+
+        # 1. 攞出所有 Sub-tasks (DAO 入面已經寫咗按 execution_order 排序)
+        sub_tasks = await task_dao.get_sub_tasks(parent_task_id)
+        if not sub_tasks:
+            return
+
+        # 2. 檢查係咪所有 sub-tasks 都 completed 晒 (成個大任務搞掂)
+        all_completed = all(t.status == "completed" for t in sub_tasks)
+        if all_completed:
+            parent_task = await task_dao.get_by_id(parent_task_id)
+            if parent_task and parent_task.status != "completed":
+                parent_task.status = "completed"
+                await session.commit()
+                logger.info(_(f"🎉 任務流 (ID: {parent_task_id}) 已經全部完成！"))
+                # 💡 日後可以在這裡喚醒 Supervisor Agent 做最終結論
+            return
+
+        # 3. 搵出目前處理緊 / 未做完嘅最細 execution_order
+        current_active_order = None
+        for t in sub_tasks:
+            if t.status in ("pending", "processing", "failed"):
+                current_active_order = t.execution_order
+                break
+
+        # 如果仲有 active 嘅任務，代表呢個 Phase 仲未搞掂，唔可以解鎖下一關
+        if current_active_order is not None:
+            return
+
+        # 4. 如果目前 Phase 搞掂晒，搵出第一個 blocked 嘅 order 進行解鎖
+        next_order_to_unlock = None
+        for t in sub_tasks:
+            if t.status == "blocked":
+                next_order_to_unlock = t.execution_order
+                break
+
+        # 5. 將下一關所有任務轉做 pending
+        if next_order_to_unlock is not None:
+            unlocked_count = 0
+            for t in sub_tasks:
+                if t.execution_order == next_order_to_unlock and t.status == "blocked":
+                    t.status = "pending"
+                    unlocked_count += 1
+
+            await session.commit()
+            logger.info(
+                _(
+                    f"🔓 解鎖任務流 (ID: {parent_task_id}) Phase {next_order_to_unlock}，{unlocked_count} 個任務進入 pending 狀態！"
+                )
+            )
 
     async def _handle_task_failure(self, task: TaskEntity, exc: Exception) -> None:
         """處理 task 失敗，計算重試 delay。"""

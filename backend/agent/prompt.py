@@ -2,11 +2,73 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
+from pathlib import Path
+
+import yaml
 
 from db.config import async_session_factory
 from db.dao import MemoryBlockDAO
 
 logger = logging.getLogger(__name__)
+
+
+def get_agent_skills_catalog(agent_id: str) -> str:
+    """
+    掃描 agent home 下的 skills symlink，
+    提取 SKILL.md 的 YAML Frontmatter，構建 Skill Catalog。
+    """
+    skills_dir = Path(f"/mnt/data/misc/ai-agent/home/{agent_id}/skills")
+    if not skills_dir.exists() or not skills_dir.is_dir():
+        return ""
+
+    catalog = ["<available_skills>"]
+
+    for item in skills_dir.iterdir():
+        skill_file = item / "SKILL.md"
+        if skill_file.exists() and skill_file.is_file():
+            try:
+                content = skill_file.read_text(encoding="utf-8")
+                # 根據標準：尋找開頭與結尾的 --- 分隔符
+                if content.startswith("---"):
+                    parts = content.split("---", 2)
+                    if len(parts) >= 3:
+                        frontmatter = yaml.safe_load(parts[1])
+                        name = frontmatter.get("name", item.name)
+                        desc = frontmatter.get("description", "")
+
+                        # 映射為 Sandbox 內的虛擬路徑
+                        virtual_path = f"/mnt/user-data/skills/{item.name}"
+
+                        # 使用 XML 格式注入 Catalog
+                        catalog.append(
+                            f"<skill>\n"
+                            f"  <name>{name}</name>\n"
+                            f"  <description>{desc}</description>\n"
+                            f"  <location>{virtual_path}</location>\n"
+                            f"</skill>"
+                        )
+            except Exception as e:
+                logger.warning(f"無法解析 Skill {item.name}: {e}")
+
+    catalog.append("</available_skills>\n")
+
+    skills_list: str = "\n".join(catalog)
+
+    return f"""<skill_system>
+你已配備多項專屬技能 (Skills)，專門為特定任務提供優化過嘅工作流 (Workflows)。每項技能都包含咗最佳實踐 (Best practices)、框架 (Frameworks) 同埋其他相關資源嘅參考。
+
+**漸進式載入模式 (Progressive Loading Pattern)：**
+1. 當用戶嘅要求 match 到某個技能嘅應用場景 (use case) 時，必須即刻運用下方 skill tag 內提供嘅 `path` 屬性，call `read_file` 去讀取該技能嘅主檔案 (main file)。
+2. 仔細閱讀並理解該技能入面嘅 workflow 同埋具體指示。
+3. 技能檔案內會包含指向同一個 folder 下其他外部資源嘅參考連結。
+4. 喺執行期間，只有真正需要用到嗰陣，先好載入 (Load) 呢啲被引用嘅資源。
+5. 嚴格、精準咁跟隨技能入面嘅所有指示去做。
+
+**技能存放位置 (Skills are located at)：** /mnt/user-data/skills/
+
+{skills_list}
+
+</skill_system>"""
 
 
 async def load_agent_soul(agent_db_id: int) -> str:
@@ -37,6 +99,8 @@ SYSTEM_PROMPT_TEMPLATE = """
 - **Step 4: 方案擬定** - 只喺思考過程輸出大綱，唔好直接寫出完整答案。
 - **PRIORITY CHECK**: 如果有任何唔清楚或歧義，**必須先向用戶提問澄清**，嚴禁盲目估計或執行。
 </thinking_style>
+
+{skills_section}
 
 <working_directory sandbox_mode="true">
 - **用戶上傳**: `/mnt/user-data/uploads` - 唯讀目錄，包含用戶提供嘅原始檔案。
@@ -86,6 +150,7 @@ async def get_agent_soul(agent_db_id: int) -> str:
 
 async def apply_prompt_template(
     agent_db_id: int,
+    agent_id: str,
     agent_name: str,
 ) -> str:
     """建立指定 agent 的系統提示，並注入最新 SOUL 記錄。"""
@@ -93,6 +158,7 @@ async def apply_prompt_template(
     prompt = SYSTEM_PROMPT_TEMPLATE.format(
         agent_name=agent_name,
         soul=await get_agent_soul(agent_db_id),
+        skills_section=get_agent_skills_catalog(agent_id),
     )
 
     return prompt
@@ -204,7 +270,9 @@ async def apply_ltm_prompt_template(
         格式化後的 prompt
     """
     if previous_memories:
-        lines = ["[Previous Memory Entries from this session (for reference to avoid duplication)]"]
+        lines = [
+            "[Previous Memory Entries from this session (for reference to avoid duplication)]"
+        ]
         for content in previous_memories:
             lines.append(f"- {content}")
         previous_section = "\n".join(lines)
