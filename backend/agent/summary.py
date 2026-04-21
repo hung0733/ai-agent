@@ -217,7 +217,7 @@ async def review_ltm(agent_id: str) -> dict:
         for group_key, group_records in groups.items():
             try:
                 # 如果超過 20000 token，分割
-                batches = _split_records_by_token_limit(group_records, limit=20000)
+                batches = _split_records_by_token_limit(group_records, limit=30000)
 
                 for batch in batches:
                     batch_memories = await _process_ltm_batch(
@@ -353,7 +353,9 @@ async def _process_ltm_batch(
         conversation = _format_conversation(batch_records)
         logger.info(_("格式化後嘅對話內容:\n%s"), conversation)
 
-        session_id = getattr(batch_records[0], "session_id", None) if batch_records else None
+        session_id = (
+            getattr(batch_records[0], "session_id", None) if batch_records else None
+        )
         previous_memories = []
         if session_id:
             try:
@@ -362,7 +364,9 @@ async def _process_ltm_batch(
             except Exception as e:
                 logger.warning(_("無法獲取 session 歷史記憶：%s"), e)
 
-        prompt = await apply_ltm_prompt_template(conversation, previous_memories=previous_memories or None)
+        prompt = await apply_ltm_prompt_template(
+            conversation, previous_memories=previous_memories or None
+        )
 
         response = await model.ainvoke(prompt)
         content = response.content.strip()
@@ -464,7 +468,7 @@ async def review_stm(
     model: BaseChatModel,
     stm_trigger_token: int,
     stm_summary_token: int,
-    max_token: int = 20000,
+    max_token: int = 30000,
 ) -> tuple[int, list, list] | None:
     """Review and summarize short-term memory when token threshold is exceeded.
 
