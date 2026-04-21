@@ -16,6 +16,7 @@ class LongTermMemEntity(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     agent_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("agent.id"), nullable=False)
+    session_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("session.id"), nullable=True)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     wing: Mapped[str | None] = mapped_column(String(80), nullable=True)
     room: Mapped[str | None] = mapped_column(String(80), nullable=True)
@@ -24,3 +25,4 @@ class LongTermMemEntity(Base):
 
     # Relationships
     agent: Mapped["AgentEntity"] = relationship("AgentEntity", back_populates="long_term_mems")
+    session: Mapped["SessionEntity | None"] = relationship("SessionEntity", back_populates="long_term_mems")

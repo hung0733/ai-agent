@@ -27,3 +27,4 @@ class SessionEntity(Base):
     sender_agent: Mapped[Optional["AgentEntity"]] = relationship("AgentEntity", foreign_keys=[sender_agent_id], back_populates="sessions_sent")
     msg_histories: Mapped[list["AgentMsgHistEntity"]] = relationship("AgentMsgHistEntity", back_populates="session")
     short_term_mems: Mapped[list["ShortTermMemEntity"]] = relationship("ShortTermMemEntity", back_populates="session")
+    long_term_mems: Mapped[list["LongTermMemEntity"]] = relationship("LongTermMemEntity", back_populates="session")

@@ -26,6 +26,17 @@ class LongTermMemDAO(BaseDAO[LongTermMemEntity]):
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
+    async def list_recent_by_session(self, session_id: int, limit: int = 3) -> list[LongTermMemEntity]:
+        """根據 session_id 獲取最近 N 筆長期記憶。"""
+        stmt = (
+            select(LongTermMemEntity)
+            .where(LongTermMemEntity.session_id == session_id)
+            .order_by(LongTermMemEntity.create_dt.desc())
+            .limit(limit)
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
     async def create_from_dto(self, dto: LongTermMemCreate) -> LongTermMemEntity:
         """從 DTO 創建長期記憶。"""
         entity = LongTermMemEntity(**dto.model_dump())

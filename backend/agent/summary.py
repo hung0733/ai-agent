@@ -161,6 +161,7 @@ def compute_truncate_count(summary_groups: list[list]) -> int:
 
     return max(0, max_idx)
 
+
 async def review_ltm(agent_id: str) -> dict:
     """Review and summarize long-term memory.
 
@@ -215,8 +216,8 @@ async def review_ltm(agent_id: str) -> dict:
         # Step 4: 處理每組
         for group_key, group_records in groups.items():
             try:
-                # 如果超過 30000 token，分割
-                batches = _split_records_by_token_limit(group_records, limit=30000)
+                # 如果超過 20000 token，分割
+                batches = _split_records_by_token_limit(group_records, limit=20000)
 
                 for batch in batches:
                     batch_memories = await _process_ltm_batch(
@@ -243,8 +244,14 @@ async def review_ltm(agent_id: str) -> dict:
 
         await session.commit()
 
-    logger.info(_("LTM review 完成：處理 %s 條，錯誤 %s 條"), processed_count, error_count)
-    return {"processed": processed_count, "errors": error_count, "memories": all_memories}
+    logger.info(
+        _("LTM review 完成：處理 %s 條，錯誤 %s 條"), processed_count, error_count
+    )
+    return {
+        "processed": processed_count,
+        "errors": error_count,
+        "memories": all_memories,
+    }
 
 
 def _group_records_by_session_date(records: list) -> dict:
@@ -327,7 +334,11 @@ async def _process_ltm_batch(
         )
 
         for i, record in enumerate(batch_records):
-            content_preview = (record.content[:100] + "...") if record.content and len(record.content) > 100 else record.content
+            content_preview = (
+                (record.content[:100] + "...")
+                if record.content and len(record.content) > 100
+                else record.content
+            )
             logger.debug(
                 _("記錄 [%s/%s] - id=%s, msg_type=%s, sender=%s, token=%s, content=%s"),
                 i + 1,
@@ -342,7 +353,16 @@ async def _process_ltm_batch(
         conversation = _format_conversation(batch_records)
         logger.info(_("格式化後嘅對話內容:\n%s"), conversation)
 
-        prompt = await apply_ltm_prompt_template(conversation)
+        session_id = getattr(batch_records[0], "session_id", None) if batch_records else None
+        previous_memories = []
+        if session_id:
+            try:
+                recent_ltms = await ltm_dao.list_recent_by_session(session_id, limit=3)
+                previous_memories = [ltm.content for ltm in recent_ltms]
+            except Exception as e:
+                logger.warning(_("無法獲取 session 歷史記憶：%s"), e)
+
+        prompt = await apply_ltm_prompt_template(conversation, previous_memories=previous_memories or None)
 
         response = await model.ainvoke(prompt)
         content = response.content.strip()
@@ -391,6 +411,7 @@ async def _process_ltm_batch(
             token = Tools.get_token_count(restatement)
             dto = LongTermMemCreate(
                 agent_id=agent_id,
+                session_id=session_id,
                 content=restatement,
                 wing=wing,
                 room=room,
@@ -402,25 +423,30 @@ async def _process_ltm_batch(
             embedding = await _get_embedding(restatement)
             # Qdrant 只接受 unsigned int 或 UUID 作為 point ID
             import uuid
+
             point_uuid = str(uuid.uuid4())
-            qdrant_points.append({
-                "id": point_uuid,
-                "vector": embedding,
-                "payload": {
-                    "agent_id": agent_id,
-                    "content": restatement,
+            qdrant_points.append(
+                {
+                    "id": point_uuid,
+                    "vector": embedding,
+                    "payload": {
+                        "agent_id": agent_id,
+                        "content": restatement,
+                        "wing": wing,
+                        "room": room,
+                        "keywords": keywords,
+                        "record_dt": record_dt.isoformat(),
+                    },
+                }
+            )
+
+            result_memories.append(
+                {
                     "wing": wing,
                     "room": room,
-                    "keywords": keywords,
-                    "record_dt": record_dt.isoformat(),
-                },
-            })
-
-            result_memories.append({
-                "wing": wing,
-                "room": room,
-                "content": restatement,
-            })
+                    "content": restatement,
+                }
+            )
 
         if qdrant_points:
             await qdrant_client.upsert_points(qdrant_points)
@@ -438,7 +464,7 @@ async def review_stm(
     model: BaseChatModel,
     stm_trigger_token: int,
     stm_summary_token: int,
-    max_token: int = 30000,
+    max_token: int = 20000,
 ) -> tuple[int, list, list] | None:
     """Review and summarize short-term memory when token threshold is exceeded.
 
@@ -463,7 +489,9 @@ async def review_stm(
 
         # Step 3: 決定保留/summary 範圍
         keep_groups, summary_groups = select_conversation_groups_for_summary(
-            groups, stm_trigger_token, stm_summary_token,
+            groups,
+            stm_trigger_token,
+            stm_summary_token,
         )
         if not summary_groups:
             logger.debug(_("無需要 summary 的對話組，session=%s"), session_db_id)
@@ -481,7 +509,9 @@ async def review_stm(
 
         # Step 5: 標記已處理的記錄
         if summarized_ids:
-            await hist_dao.mark_records_as_summarized(list(summarized_ids), session_db_id)
+            await hist_dao.mark_records_as_summarized(
+                list(summarized_ids), session_db_id
+            )
 
         await session.commit()
 
@@ -523,9 +553,7 @@ async def _process_summary_batches(
             )
             if not success:
                 batch_failed = True
-                logger.warning(
-                    _("批次處理失敗，跳過標記記錄為已 summary")
-                )
+                logger.warning(_("批次處理失敗，跳過標記記錄為已 summary"))
                 break
             # 記錄成功處理的 ID
             for r in batch_records:
@@ -548,9 +576,7 @@ async def _process_summary_batches(
             for r in batch_records:
                 successfully_summarized_ids.add(r.id)
         else:
-            logger.warning(
-                _("最後一批處理失敗，跳過標記記錄為已 summary")
-            )
+            logger.warning(_("最後一批處理失敗，跳過標記記錄為已 summary"))
 
     return successfully_summarized_ids
 
@@ -558,16 +584,18 @@ async def _process_summary_batches(
 def _format_conversation(records: list) -> str:
     """Format records into JSON conversation string."""
     import json
-    
+
     conversation_data = []
     for record in records:
-        conversation_data.append({
-            "timestamp": record.create_dt.strftime("%Y-%m-%d %H:%M:%S"),
-            "sender": record.sender,
-            "msg_type": record.msg_type,
-            "content": record.content,
-        })
-    
+        conversation_data.append(
+            {
+                "timestamp": record.create_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                "sender": record.sender,
+                "msg_type": record.msg_type,
+                "content": record.content,
+            }
+        )
+
     return json.dumps(conversation_data, ensure_ascii=False, indent=2)
 
 
@@ -584,7 +612,7 @@ async def _process_single_batch(
     """
     try:
         # Log 批次基本信息
-        total_token = sum(getattr(r, 'token', 0) for r in batch_records)
+        total_token = sum(getattr(r, "token", 0) for r in batch_records)
         logger.info(
             _("Summary 批次處理開始 - session=%s, 記錄數=%s, 總 token=%s"),
             session_db_id,
@@ -594,15 +622,19 @@ async def _process_single_batch(
 
         # Log 每條記錄的詳細信息
         for i, record in enumerate(batch_records):
-            content_preview = (record.content[:100] + "...") if record.content and len(record.content) > 100 else record.content
+            content_preview = (
+                (record.content[:100] + "...")
+                if record.content and len(record.content) > 100
+                else record.content
+            )
             logger.debug(
                 _("記錄 [%s/%s] - id=%s, msg_type=%s, sender=%s, token=%s, content=%s"),
                 i + 1,
                 len(batch_records),
-                getattr(record, 'id', 'N/A'),
-                getattr(record, 'msg_type', 'N/A'),
-                getattr(record, 'sender', 'N/A'),
-                getattr(record, 'token', 0),
+                getattr(record, "id", "N/A"),
+                getattr(record, "msg_type", "N/A"),
+                getattr(record, "sender", "N/A"),
+                getattr(record, "token", 0),
                 content_preview,
             )
 
@@ -614,7 +646,7 @@ async def _process_single_batch(
         prompt = await apply_stm_prompt_template(conversation)
 
         response = await model.ainvoke(prompt)
-        content = response.content.strip() # type: ignore
+        content = response.content.strip()  # type: ignore
 
         # 移除 markdown 代碼塊包裹（如 ```json ... ```）
         if content.startswith("```"):

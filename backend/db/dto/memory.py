@@ -36,6 +36,7 @@ class ShortTermMemResponse(BaseModel):
 
 class LongTermMemCreate(BaseModel):
     agent_id: int
+    session_id: int | None = None
     content: str
     wing: str | None = None
     room: str | None = None
@@ -46,6 +47,7 @@ class LongTermMemCreate(BaseModel):
 class LongTermMemResponse(BaseModel):
     id: int
     agent_id: int
+    session_id: int | None = None
     content: str
     wing: str | None = None
     room: str | None = None
@@ -57,6 +59,7 @@ class LongTermMemResponse(BaseModel):
         return cls(
             id=entity.id,
             agent_id=entity.agent_id,
+            session_id=entity.session_id,
             content=entity.content,
             wing=entity.wing,
             room=entity.room,
