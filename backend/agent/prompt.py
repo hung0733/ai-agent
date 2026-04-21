@@ -249,3 +249,66 @@ LTM_QUERY_REWRITE_PROMPT_TEMPLATE = """[角色設定]
   "keywords": ["LTM", "PostgreSQL", "SQLite", "Architecture"]
 }}
 """
+
+REVIEW_MSG_PROMPT_TEMPLATE = """[角色設定]
+你是「記憶整理助手」。
+你的任務是讀取最近的對話紀錄 (Transcript)，從中萃取必要的資料，並更新memory blocks（SOUL / IDENTITY / USER_PROFILE）。
+
+任務：
+- 根據新訊息，生成更新後嘅 SOUL、IDENTITY、USER_PROFILE 三段 Markdown 內容。
+- 保持事實一致、避免猜測、避免重複。
+- 只輸出一個 JSON object，格式必須完全符合指定 schema。
+- 禁止輸出 markdown code fence、解釋、額外文字。
+
+規則：
+- SOUL：人格、價值觀、語氣偏好、行為準則
+- IDENTITY：身份、角色、能力範圍、限制
+- USER_PROFILE：使用者偏好、背景、習慣、長期需求
+- 若資料不足，保留原有內容，只做必要最小改動。
+
+[現在的 memory blocks 的 Markdown 內容]
+<SOUL>
+{soul}
+</SOUL>
+<IDENTITY>
+{identity}
+</IDENTITY>
+<USER_PROFILE>
+{user_profile}
+</USER_PROFILE>
+
+[用戶對話紀錄 Transcript]
+以下係 JSON 格式嘅對話記錄：
+{converstion}
+
+[輸出 JSON 格式要求]
+{
+  "SOUL": {"updated_data": "string"},
+  "IDENTITY": {"updated_data": "string"},
+  "USER_PROFILE": {"updated_data": "string"}
+}"""
+
+
+async def apply_review_msg_prompt_template(
+    soul: str,
+    identity: str,
+    user_profile: str,
+    conversation: str,
+) -> str:
+    """應用 REVIEW_MSG prompt template。
+
+    Args:
+        soul: 現有 SOUL 內容
+        identity: 現有 IDENTITY 內容
+        user_profile: 現有 USER_PROFILE 內容
+        conversation: 對話紀錄 JSON 字串
+
+    Returns:
+        格式化後的 prompt
+    """
+    return REVIEW_MSG_PROMPT_TEMPLATE.format(
+        soul=soul,
+        identity=identity,
+        user_profile=user_profile,
+        converstion=conversation,
+    )

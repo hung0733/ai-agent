@@ -200,3 +200,41 @@ class AgentMsgHistDAO(BaseDAO[AgentMsgHistEntity]):
             .values(is_ltm_summary=True)
         )
         await self._session.execute(stmt)
+
+    async def list_unanalyzed_for_review(self, agent_id: str) -> list[AgentMsgHistEntity]:
+        """列出指定 agent 未分析（is_analyst=0）的記錄。
+
+        Args:
+            agent_id: Agent ID（業務 ID，如 "agent-xxx"）
+
+        Returns:
+            未分析的記錄列表
+        """
+        stmt = (
+            select(AgentMsgHistEntity)
+            .join(SessionEntity, AgentMsgHistEntity.session_id == SessionEntity.id)
+            .join(AgentEntity, SessionEntity.recv_agent_id == AgentEntity.id)
+            .where(
+                AgentEntity.agent_id == agent_id,
+                AgentMsgHistEntity.is_analyst == 0,
+            )
+            .order_by(AgentMsgHistEntity.session_id, AgentMsgHistEntity.create_dt)
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def mark_records_as_analyzed(self, record_ids: list[int]) -> None:
+        """標記記錄為已分析（is_analyst=1）。
+
+        Args:
+            record_ids: 記錄 ID 列表
+        """
+        if not record_ids:
+            return
+
+        stmt = (
+            update(AgentMsgHistEntity)
+            .where(AgentMsgHistEntity.id.in_(record_ids))
+            .values(is_analyst=1)
+        )
+        await self._session.execute(stmt)

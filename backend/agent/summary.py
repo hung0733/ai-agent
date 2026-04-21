@@ -11,13 +11,14 @@ from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI
 from pydantic import SecretStr
 
-from agent.prompt import apply_ltm_prompt_template, apply_stm_prompt_template
+from agent.prompt import apply_ltm_prompt_template, apply_review_msg_prompt_template, apply_stm_prompt_template
 from db.config import async_session_factory
 from db.dao.agent_dao import AgentDAO
 from db.dao.agent_msg_hist_dao import AgentMsgHistDAO
 from db.dao.long_term_mem_dao import LongTermMemDAO
+from db.dao.memory_block_dao import MemoryBlockDAO
 from db.dao.short_term_mem_dao import ShortTermMemDAO
-from db.dto.memory import LongTermMemCreate, ShortTermMemCreate
+from db.dto.memory import LongTermMemCreate, MemoryBlockCreate, MemoryBlockUpdate, ShortTermMemCreate
 from utils.tools import Tools
 from vector.qdrant_client import QdrantClient
 from i18n import _
@@ -254,6 +255,113 @@ async def review_ltm(agent_id: str) -> dict:
     }
 
 
+async def review_msg(agent_id: str) -> dict:
+    """Review and update memory blocks (SOUL / IDENTITY / USER_PROFILE).
+
+    查詢未分析的記錄，用 LLM 生成更新後的 memory blocks 並寫入 PostgreSQL。
+
+    Args:
+        agent_id: Agent ID
+
+    Returns:
+        {"processed": int, "errors": int, "updated_blocks": list[str]}
+    """
+    model = ChatOpenAI(
+        base_url=Tools.require_env("SYS_ACT_LLM_ENDPOINT"),
+        api_key=SecretStr(Tools.require_env("SYS_ACT_LLM_API_KEY")),
+        model=Tools.require_env("SYS_ACT_LLM_MODEL"),
+        streaming=True,
+        stream_usage=True,
+    )
+
+    processed_count = 0
+    error_count = 0
+    processed_ids: list[int] = []
+    updated_blocks: list[str] = []
+
+    async with async_session_factory() as session:
+        agent_dao = AgentDAO(session)
+        hist_dao = AgentMsgHistDAO(session)
+        mem_block_dao = MemoryBlockDAO(session)
+
+        # 查詢 agent 的 DB id（業務 agent_id → 整數主鍵）
+        agent_entity = await agent_dao.get_by_agent_id(agent_id)
+        if not agent_entity:
+            raise ValueError(_("找不到 agent: %s") % agent_id)
+        agent_db_id = agent_entity.id
+
+        # Step 1: 查詢未分析的記錄
+        records = await hist_dao.list_unanalyzed_for_review(agent_id)
+        if not records:
+            logger.debug(_("無未分析的記錄，agent_id=%s"), agent_id)
+            return {"processed": 0, "errors": 0, "updated_blocks": []}
+
+        # Step 2: 按 session_id + date 分組
+        groups = _group_records_by_session_date(records)
+
+        # Step 3: 載入現有 memory blocks
+        soul_blocks = await mem_block_dao.list_by_agent(agent_db_id, "SOUL")
+        identity_blocks = await mem_block_dao.list_by_agent(agent_db_id, "IDENTITY")
+        user_profile_blocks = await mem_block_dao.list_by_agent(agent_db_id, "USER_PROFILE")
+
+        soul_content = max(soul_blocks, key=lambda b: b.last_upd_dt).content if soul_blocks else ""
+        identity_content = max(identity_blocks, key=lambda b: b.last_upd_dt).content if identity_blocks else ""
+        user_profile_content = max(user_profile_blocks, key=lambda b: b.last_upd_dt).content if user_profile_blocks else ""
+
+        # Step 4: 處理每組
+        for group_key, group_records in groups.items():
+            try:
+                # 如果超過 token 限制，分割
+                batches = _split_records_by_token_limit(group_records, limit=30000)
+
+                for batch in batches:
+                    batch_updated = await _process_review_msg_batch(
+                        agent_db_id=agent_db_id,
+                        batch_records=batch,
+                        mem_block_dao=mem_block_dao,
+                        model=model,
+                        soul_content=soul_content,
+                        identity_content=identity_content,
+                        user_profile_content=user_profile_content,
+                    )
+                    if batch_updated:
+                        processed_count += len(batch)
+                        processed_ids.extend([r.id for r in batch])
+                        updated_blocks.extend(batch_updated)
+                        # 更新本地內容供下一批次使用
+                        for block_type, new_content in batch_updated.items():
+                            if block_type == "SOUL":
+                                soul_content = new_content
+                            elif block_type == "IDENTITY":
+                                identity_content = new_content
+                            elif block_type == "USER_PROFILE":
+                                user_profile_content = new_content
+                    else:
+                        error_count += len(batch)
+
+            except Exception as exc:
+                logger.error(_("處理 review_msg 批次失敗：%s"), exc)
+                error_count += len(group_records)
+
+        # Step 5: 標記已處理的記錄
+        if processed_ids:
+            await hist_dao.mark_records_as_analyzed(processed_ids)
+
+        await session.commit()
+
+    logger.info(
+        _("review_msg 完成：處理 %s 條，錯誤 %s 條，更新 %s 個 blocks"),
+        processed_count,
+        error_count,
+        len(updated_blocks),
+    )
+    return {
+        "processed": processed_count,
+        "errors": error_count,
+        "updated_blocks": updated_blocks,
+    }
+
+
 def _group_records_by_session_date(records: list) -> dict:
     """按 session_id + date 分組記錄。
 
@@ -461,6 +569,105 @@ async def _process_ltm_batch(
     except Exception as exc:
         logger.error(_("LTM 批次處理失敗：%s"), exc)
         return []
+
+
+async def _process_review_msg_batch(
+    agent_db_id: int,
+    batch_records: list,
+    mem_block_dao: MemoryBlockDAO,
+    model: BaseChatModel,
+    soul_content: str,
+    identity_content: str,
+    user_profile_content: str,
+) -> dict[str, str]:
+    """處理單個 review_msg 批次。
+
+    Args:
+        agent_db_id: Agent DB ID
+        batch_records: 記錄批次
+        mem_block_dao: Memory Block DAO
+        model: LLM model
+        soul_content: 現有 SOUL 內容
+        identity_content: 現有 IDENTITY 內容
+        user_profile_content: 現有 USER_PROFILE 內容
+
+    Returns:
+        成功更新的 blocks，格式為 {"SOUL": "...", "IDENTITY": "...", "USER_PROFILE": "..."}
+    """
+    try:
+        total_token = sum(getattr(r, "token", 0) for r in batch_records)
+        logger.info(
+            _("review_msg 批次處理開始 - agent=%s, 記錄數=%s, 總 token=%s"),
+            agent_db_id,
+            len(batch_records),
+            total_token,
+        )
+
+        conversation = _format_conversation(batch_records)
+        logger.info(_("格式化後嘅對話內容:\n%s"), conversation)
+
+        prompt = await apply_review_msg_prompt_template(
+            soul=soul_content,
+            identity=identity_content,
+            user_profile=user_profile_content,
+            conversation=conversation,
+        )
+
+        response = await model.ainvoke(prompt)
+        content = response.content.strip()
+
+        if content.startswith("```"):
+            content = content.split("\n", 1)[-1] if "\n" in content else content[3:]
+            if content.endswith("```"):
+                content = content[:-3]
+            content = content.strip()
+
+        logger.debug(_("LLM 返回內容:\n%s"), content[:500])
+
+        try:
+            data = json.loads(content)
+        except json.JSONDecodeError as e:
+            logger.error(_("LLM 返回的 JSON 格式錯誤: %s — %s"), content[:200], e)
+            return {}
+
+        now = datetime.now(timezone.utc)
+        updated_blocks: dict[str, str] = {}
+
+        for block_type in ["SOUL", "IDENTITY", "USER_PROFILE"]:
+            block_data = data.get(block_type, {})
+            updated_data = block_data.get("updated_data", "")
+
+            if not updated_data:
+                continue
+
+            # 查找現有 block
+            existing_blocks = await mem_block_dao.list_by_agent(agent_db_id, block_type)
+            if existing_blocks:
+                # 更新最新的一條
+                latest_block = max(existing_blocks, key=lambda b: b.last_upd_dt)
+                update_dto = MemoryBlockUpdate(
+                    content=updated_data,
+                    last_upd_dt=now,
+                )
+                await mem_block_dao.update_from_dto(latest_block, update_dto)
+            else:
+                # 創建新 block
+                create_dto = MemoryBlockCreate(
+                    agent_id=agent_db_id,
+                    memory_type=block_type,
+                    content=updated_data,
+                    last_upd_dt=now,
+                )
+                await mem_block_dao.create_from_dto(create_dto)
+
+            updated_blocks[block_type] = updated_data
+
+        logger.info(_("已更新 %s 個 memory blocks"), len(updated_blocks))
+        return updated_blocks
+
+    except Exception as exc:
+        logger.error(_("review_msg 批次處理失敗：%s"), exc)
+        return {}
 
 
 async def review_stm(
