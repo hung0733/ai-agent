@@ -18,6 +18,7 @@ class AgentCreate(BaseModel):
     llm_group_id: Optional[int] = None
     capabilities: dict[str, Any] = Field(default_factory=dict)
     current_tasks: int = 0
+    agent_type: str = "agent"
 
 
 class AgentUpdate(BaseModel):
@@ -27,6 +28,7 @@ class AgentUpdate(BaseModel):
     llm_group_id: Optional[int] = None
     capabilities: Optional[dict[str, Any]] = None
     current_tasks: Optional[int] = None
+    agent_type: Optional[str] = Field(None, max_length=20)
 
 
 class AgentResponse(BaseModel):
@@ -39,6 +41,7 @@ class AgentResponse(BaseModel):
     llm_group_id: Optional[int]
     capabilities: dict[str, Any]
     current_tasks: int
+    agent_type: str
 
     @classmethod
     def from_entity(cls, entity: AgentEntity) -> "AgentResponse":
@@ -52,4 +55,5 @@ class AgentResponse(BaseModel):
             llm_group_id=entity.llm_group_id,
             capabilities=entity.capabilities or {},
             current_tasks=entity.current_tasks,
+            agent_type=entity.agent_type,
         )

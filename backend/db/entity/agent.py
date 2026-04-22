@@ -27,6 +27,7 @@ class AgentEntity(Base):
     llm_group_id: Mapped[Optional[int]] = mapped_column(BigInteger, ForeignKey("llm_group.id"))
     capabilities: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, default=dict)
     current_tasks: Mapped[int] = mapped_column(Integer, default=0)
+    agent_type: Mapped[str] = mapped_column(String(20), nullable=False, default="agent")
 
     # Relationships
     user: Mapped["UserEntity"] = relationship("UserEntity", back_populates="agents")
