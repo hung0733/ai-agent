@@ -57,15 +57,45 @@ class MemoryStore:
         messages: list[BaseMessage] = []
         
         # 2. STM Messages（≤ 10000 token）
-        messages.extend(self._cache.stm_messages)
+        stm_token_count = 0
+        for stm_msg in self._cache.stm_messages:
+            messages.append(stm_msg)
+            stm_token_count += Tools.get_token_count(stm_msg.content)
+        
+        if self._cache.stm_messages:
+            logger.debug(
+                _("STM Messages, Count: %s, Token: %s"),
+                len(self._cache.stm_messages),
+                stm_token_count,
+            )
         
         # 3. Old Messages（≤ 20000 token，取最新）
         old_messages = self._get_old_messages_within_token_limit()
+        old_msg_count = 0
+        old_token_count = 0
+        old_len = 0
+        for old_msg in old_messages:
+            messages.append(old_msg)
+            old_msg_count += 1
+            old_token_count += Tools.get_token_count(old_msg.content)
+            old_len += len(old_msg.content)
+        
+        logger.info(
+            _("Old Messages, Count: %s, Length: %s, Token: %s"),
+            old_msg_count,
+            old_len,
+            old_token_count,
+        )
         messages.extend(old_messages)
         
         # 4. Current Date Time
         current_time = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S %Z")
-        messages.append(SystemMessage(content=_("當前時間：%s") % current_time))
+        current_time_msg = SystemMessage(content=_("當前時間：%s") % current_time)
+        messages.append(current_time_msg)
+        logger.debug(
+            _("Current Date Time, Token: %s"),
+            Tools.get_token_count(current_time_msg.content),
+        )
         
         # 5. LTM（如果 message 係 HumanMessage）
         ltm_message: Optional[AIMessage] = None
@@ -73,15 +103,38 @@ class MemoryStore:
             ltm_message = await self._search_ltm(message)
             if ltm_message:
                 messages.append(ltm_message)
+                logger.debug(
+                    _("LTM Result, Token: %s"),
+                    Tools.get_token_count(ltm_message.content),
+                )
         
         # 6. Last Message
         messages.append(message)
+        last_token = Tools.get_token_count(message.content)
+        logger.info(
+            _("Last Message, Length: %s, Token: %s"),
+            len(message.content),
+            last_token,
+        )
+        logger.debug(_("Last Message: %s"), message.content)
         
         # 7. 記住消息等 commit
         self._pending_commits[step_id] = {
             "ltm_message": ltm_message,
             "last_message": message,
         }
+        
+        # 總計 log
+        total_token = stm_token_count + old_token_count + Tools.get_token_count(current_time_msg.content)
+        if ltm_message:
+            total_token += Tools.get_token_count(ltm_message.content)
+        total_token += last_token
+        
+        logger.info(
+            _("Total Messages, Count: %s, Token: %s"),
+            len(messages),
+            total_token,
+        )
         
         return messages
     
