@@ -117,9 +117,9 @@ class OpenAIClient:
             
             stream = await self._client.chat.completions.create(
                 model=self._model,
-                messages=openai_messages,
+                messages=openai_messages, # type: ignore
                 stream=True,
-            )
+            ) # type: ignore
             
             async for chunk in stream:
                 if not chunk.choices:
@@ -183,15 +183,39 @@ class OpenAIClient:
     async def ainvoke(self, messages: list[BaseMessage]) -> list[StreamChunk]:
         """Invoke LLM and collect all stream chunks.
         
+        Merges streaming chunks into complete content/think/tool chunks.
+        
         Args:
             messages: List of langchain BaseMessage
             
         Returns:
-            List of all StreamChunk objects (content, tool, tool_result)
+            List of complete StreamChunk objects (think, content, tool)
         """
-        chunks: list[StreamChunk] = []
+        content_parts: list[str] = []
+        think_parts: list[str] = []
+        tool_chunks: list[StreamChunk] = []
         
         async for chunk in self.astream(messages):
-            chunks.append(chunk)
+            if chunk.chunk_type == "content" and chunk.content:
+                content_parts.append(chunk.content)
+            elif chunk.chunk_type == "think" and chunk.content:
+                think_parts.append(chunk.content)
+            elif chunk.chunk_type == "tool":
+                tool_chunks.append(chunk)
+            # Skip "done" chunk
         
-        return chunks
+        result: list[StreamChunk] = []
+        
+        if think_parts:
+            result.append(
+                self._create_chunk(chunk_type="think", content="".join(think_parts))
+            )
+        
+        if content_parts:
+            result.append(
+                self._create_chunk(chunk_type="content", content="".join(content_parts))
+            )
+        
+        result.extend(tool_chunks)
+        
+        return result
