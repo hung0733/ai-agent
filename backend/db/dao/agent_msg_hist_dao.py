@@ -139,3 +139,37 @@ class AgentMsgHistDAO(BaseDAO[AgentMsgHistEntity]):
             .values(is_analyst=1)
         )
         await self._session.execute(stmt)
+
+    async def get_last_by_step(self, session_id: int, step_id: str) -> AgentMsgHistEntity | None:
+        """獲取指定 step_id 嘅最後一條記錄（按 id 排序）。"""
+        stmt = (
+            select(AgentMsgHistEntity)
+            .where(AgentMsgHistEntity.session_id == session_id)
+            .where(AgentMsgHistEntity.step_id == step_id)
+            .order_by(AgentMsgHistEntity.id.desc())
+            .limit(1)
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def list_by_step(self, session_id: int, step_id: str) -> list[AgentMsgHistEntity]:
+        """獲取指定 step_id 嘅所有記錄（按 id 排序）。"""
+        stmt = (
+            select(AgentMsgHistEntity)
+            .where(AgentMsgHistEntity.session_id == session_id)
+            .where(AgentMsgHistEntity.step_id == step_id)
+            .order_by(AgentMsgHistEntity.id)
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def count_by_step(self, session_id: int, step_id: str) -> int:
+        """計算指定 step_id 嘅記錄數量。"""
+        from sqlalchemy import func
+        stmt = (
+            select(func.count(AgentMsgHistEntity.id))
+            .where(AgentMsgHistEntity.session_id == session_id)
+            .where(AgentMsgHistEntity.step_id == step_id)
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one() or 0
