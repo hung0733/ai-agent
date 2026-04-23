@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from datetime import datetime, timezone
@@ -55,11 +54,11 @@ class ExtLanggraphCheckpointer(BaseCheckpointSaver):
         del new_versions
 
         thread_id = self._get_config_str(config, "thread_id")
-        checkpoint_id = str(checkpoint["id"])
+        step_id = str(checkpoint["id"])
         logger.debug(
-            _("ExtLanggraphCheckpointer 寫入 - thread_id: %s, checkpoint_id: %s"),
+            _("ExtLanggraphCheckpointer 寫入 - thread_id: %s, step_id: %s"),
             thread_id,
-            checkpoint_id,
+            step_id,
         )
 
         messages = checkpoint.get("channel_values", {}).get("messages", [])
@@ -67,15 +66,12 @@ class ExtLanggraphCheckpointer(BaseCheckpointSaver):
             return config
 
         latest_message = messages[-1]
-        message_idx = len(messages) - 1
         session_id = self._get_config_optional_int(config, "session_db_id")
         if session_id is None:
             session_id = await self._resolve_session_db_id(thread_id)
         records = self._build_records_for_message(
             session_id=session_id,
-            thread_id=thread_id,
-            checkpoint_id=checkpoint_id,
-            message_idx=message_idx,
+            step_id=step_id,
             message=latest_message,
             sender_name=self._get_config_str(config, "sender_name"),
             recv_name=self._get_config_str(config, "recv_name"),
@@ -116,19 +112,17 @@ class ExtLanggraphCheckpointer(BaseCheckpointSaver):
 
     async def aget_tuple(self, config: RunnableConfig) -> Optional[CheckpointTuple]:
         thread_id = self._get_config_str(config, "thread_id")
-        checkpoint_id = self._get_config_optional_str(config, "checkpoint_id")
         logger.debug(
-            _("ExtLanggraphCheckpointer 讀取 - thread_id: %s, checkpoint_id: %s"),
+            _("ExtLanggraphCheckpointer 讀取 - thread_id: %s"),
             thread_id,
-            checkpoint_id,
         )
 
-        loaded_checkpoint_id, step, payloads = await self._load_checkpoint_messages(config)
-        if not loaded_checkpoint_id or not payloads:
+        loaded_step_id, step, payloads = await self._load_checkpoint_messages(config)
+        if not loaded_step_id or not payloads:
             return None
 
         checkpoint = empty_checkpoint()
-        checkpoint["id"] = loaded_checkpoint_id
+        checkpoint["id"] = loaded_step_id
         checkpoint["channel_values"]["messages"] = messages_from_dict(payloads)
         return CheckpointTuple(
             config=config,
@@ -209,14 +203,12 @@ class ExtLanggraphCheckpointer(BaseCheckpointSaver):
         self,
         *,
         session_id: int,
-        thread_id: str,
-        checkpoint_id: str,
-        message_idx: int,
+        step_id: str,
         message: BaseMessage,
         sender_name: str,
         recv_name: str,
     ) -> list[AgentMsgHistCreate]:
-        payload_json = json.dumps(
+        content_json = json.dumps(
             message_to_dict(message),
             ensure_ascii=False,
             default=str,
@@ -228,14 +220,11 @@ class ExtLanggraphCheckpointer(BaseCheckpointSaver):
             records.append(
                 self._build_record(
                     session_id=session_id,
-                    thread_id=thread_id,
-                    checkpoint_id=checkpoint_id,
-                    message_idx=message_idx,
+                    step_id=step_id,
                     sender=sender_name,
                     msg_type="human",
                     create_dt=create_dt,
-                    content=self._stringify_content(message.content),
-                    payload_json=payload_json,
+                    content=content_json,
                 )
             )
             return records
@@ -247,23 +236,11 @@ class ExtLanggraphCheckpointer(BaseCheckpointSaver):
                 records.append(
                     self._build_record(
                         session_id=session_id,
-                        thread_id=thread_id,
-                        checkpoint_id=checkpoint_id,
-                        message_idx=message_idx,
+                        step_id=step_id,
                         sender=tool_name,
                         msg_type="tool",
-                        tool_call_id=self._optional_str(tool_call.get("id")),
-                        tool_name=tool_name,
                         create_dt=create_dt,
-                        content=json.dumps(
-                            {
-                                "name": tool_name,
-                                "args": tool_call.get("args", {}),
-                            },
-                            ensure_ascii=False,
-                            default=str,
-                        ),
-                        payload_json=payload_json,
+                        content=content_json,
                     )
                 )
 
@@ -272,14 +249,11 @@ class ExtLanggraphCheckpointer(BaseCheckpointSaver):
                 records.append(
                     self._build_record(
                         session_id=session_id,
-                        thread_id=thread_id,
-                        checkpoint_id=checkpoint_id,
-                        message_idx=message_idx,
+                        step_id=step_id,
                         sender=recv_name,
                         msg_type="ai",
                         create_dt=create_dt,
-                        content=content,
-                        payload_json=payload_json,
+                        content=content_json,
                     )
                 )
             return records
@@ -289,16 +263,11 @@ class ExtLanggraphCheckpointer(BaseCheckpointSaver):
             records.append(
                 self._build_record(
                     session_id=session_id,
-                    thread_id=thread_id,
-                    checkpoint_id=checkpoint_id,
-                    message_idx=message_idx,
+                    step_id=step_id,
                     sender=tool_name,
                     msg_type="tool_result",
-                    tool_call_id=message.tool_call_id,
-                    tool_name=tool_name,
                     create_dt=create_dt,
-                    content=self._stringify_content(message.content),
-                    payload_json=payload_json,
+                    content=content_json,
                 )
             )
         return records
@@ -307,30 +276,20 @@ class ExtLanggraphCheckpointer(BaseCheckpointSaver):
     def _build_record(
         *,
         session_id: int,
-        thread_id: str,
-        checkpoint_id: str,
-        message_idx: int,
+        step_id: str,
         sender: str,
         msg_type: str,
         create_dt: datetime,
         content: str,
-        payload_json: str,
-        tool_call_id: Optional[str] = None,
-        tool_name: Optional[str] = None,
         token: Optional[int] = None,
     ) -> AgentMsgHistCreate:
         return AgentMsgHistCreate(
             session_id=session_id,
-            thread_id=thread_id,
-            checkpoint_id=checkpoint_id,
-            message_idx=message_idx,
+            step_id=step_id,
             sender=sender,
             msg_type=msg_type,
-            tool_call_id=tool_call_id,
-            tool_name=tool_name,
             create_dt=create_dt,
             content=content,
-            payload_json=payload_json,
             token=Tools.get_token_count(content) if token is None else token,
             is_stm_summary=False,
             is_ltm_summary=False,
@@ -341,17 +300,6 @@ class ExtLanggraphCheckpointer(BaseCheckpointSaver):
         async with async_session_factory() as session:
             dao = AgentMsgHistDAO(session)
             for record in records:
-                exists = await dao.exists_message(
-                    session_id=record.session_id,
-                    checkpoint_id=record.checkpoint_id,
-                    message_idx=record.message_idx,
-                    msg_type=record.msg_type,
-                    sender=record.sender,
-                    content=record.content,
-                    tool_call_id=record.tool_call_id,
-                )
-                if exists:
-                    continue
                 await dao.create_from_dto(record)
             await session.commit()
 
@@ -360,14 +308,23 @@ class ExtLanggraphCheckpointer(BaseCheckpointSaver):
         config: RunnableConfig,
     ) -> tuple[Optional[str], int, list[dict[str, Any]]]:
         thread_id = self._get_config_str(config, "thread_id")
-        checkpoint_id = self._get_config_optional_str(config, "checkpoint_id")
         async with async_session_factory() as session:
-            dao = AgentMsgHistDAO(session)
-            target_checkpoint_id = checkpoint_id or await dao.get_latest_checkpoint_id(thread_id)
-            if not target_checkpoint_id:
+            session_dao = SessionDAO(session)
+            session_entity = await session_dao.get_by_session_id(thread_id)
+            if session_entity is None:
                 return None, -2, []
-            entities = await dao.list_by_thread_unsummarized(thread_id)
-            payloads = [json.loads(entity.payload_json) for entity in entities]
+            session_id = session_entity.id
+
+            dao = AgentMsgHistDAO(session)
+            entities = await dao.list_unsummarized_by_session(session_id)
+            payloads = []
+            for entity in entities:
+                try:
+                    payload = json.loads(entity.content)
+                    payloads.append(payload)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+
             unique_payloads: list[dict[str, Any]] = []
             seen_payloads: set[str] = set()
             for payload in payloads:
@@ -376,8 +333,10 @@ class ExtLanggraphCheckpointer(BaseCheckpointSaver):
                     continue
                 seen_payloads.add(key)
                 unique_payloads.append(payload)
+
             step = max(len(unique_payloads) - 2, -1)
-            return target_checkpoint_id, step, unique_payloads
+            latest_step_id = entities[-1].step_id if entities else None
+            return latest_step_id, step, unique_payloads
 
     @staticmethod
     def _stringify_content(content: Any) -> str:
@@ -386,10 +345,6 @@ class ExtLanggraphCheckpointer(BaseCheckpointSaver):
         if content is None:
             return ""
         return str(content)
-
-    @staticmethod
-    def _optional_str(value: Any) -> Optional[str]:
-        return str(value) if value is not None else None
 
     @staticmethod
     def _extract_token(message: AIMessage | AIMessageChunk) -> int:

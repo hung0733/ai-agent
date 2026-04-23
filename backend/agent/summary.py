@@ -792,18 +792,42 @@ async def _process_summary_batches(
     return successfully_summarized_ids
 
 
+def _extract_readable_content(record) -> str:
+    """從 JSON 格式的 content 中提取可讀文字。"""
+    raw = record.content
+    try:
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            data_type = data.get("type", "")
+            if data_type == "human":
+                return data.get("data", {}).get("content", raw)
+            elif data_type in ("ai", "AIMessage", "AIMessageChunk"):
+                return data.get("data", {}).get("content", "")
+            elif data_type in ("tool", "ToolMessage"):
+                data_content = data.get("data", {})
+                return data_content.get("content", "")
+            elif data_type == "tool_call":
+                name = data.get("data", {}).get("name", "tool")
+                args = data.get("data", {}).get("args", {})
+                return f"呼叫工具 {name}: {json.dumps(args, ensure_ascii=False)}"
+    except (json.JSONDecodeError, TypeError, KeyError):
+        pass
+    return raw
+
+
 def _format_conversation(records: list) -> str:
     """Format records into JSON conversation string."""
     import json
 
     conversation_data = []
     for record in records:
+        content = _extract_readable_content(record)
         conversation_data.append(
             {
                 "timestamp": record.create_dt.strftime("%Y-%m-%d %H:%M:%S"),
                 "sender": record.sender,
                 "msg_type": record.msg_type,
-                "content": record.content,
+                "content": content,
             }
         )
 

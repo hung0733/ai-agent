@@ -17,7 +17,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision = '010_fix_checkpoint_id'
-down_revision = '009_add_agent_type'
+down_revision = '009'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

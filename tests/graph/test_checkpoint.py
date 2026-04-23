@@ -15,28 +15,22 @@ from graph.checkpoint import ExtLanggraphCheckpointer
 from utils.tools import Tools
 
 
-def test_agent_msg_hist_create_supports_audit_fields() -> None:
+def test_agent_msg_hist_create_supports_step_id() -> None:
     dto = AgentMsgHistCreate(
         session_id=1,
-        thread_id="thread-1",
-        checkpoint_id="checkpoint-1",
-        message_idx=0,
+        step_id="step-abc123",
         sender="Tester",
         msg_type="human",
-        tool_call_id=None,
-        tool_name=None,
         create_dt="2026-04-13T00:00:00+00:00",
         content="hello",
-        payload_json='{"type":"human"}',
         token=0,
         is_stm_summary=False,
         is_ltm_summary=False,
         is_analyst=0,
     )
 
-    assert dto.thread_id == "thread-1"
-    assert dto.checkpoint_id == "checkpoint-1"
-    assert dto.message_idx == 0
+    assert dto.step_id == "step-abc123"
+    assert dto.msg_type == "human"
     assert dto.is_stm_summary is False
     assert dto.is_ltm_summary is False
 
@@ -89,16 +83,13 @@ def test_checkpointer_aput_persists_latest_ai_message_and_tool_calls() -> None:
         assert [record.msg_type for record in captured] == ["tool", "ai"]
         assert [record.sender for record in captured] == ["web_search", "小丸"]
         assert captured[0].session_id == 11
-        assert captured[0].thread_id == "thread-1"
-        assert captured[0].checkpoint_id == "checkpoint-1"
-        assert captured[0].message_idx == 1
-        assert json.loads(captured[0].content) == {
-            "name": "web_search",
-            "args": {"query": "weather"},
-        }
+        assert captured[0].step_id == "checkpoint-1"
+        content_data = json.loads(captured[0].content)
+        assert content_data["data"]["tool_calls"][0]["name"] == "web_search"
         assert captured[0].token == Tools.get_token_count(captured[0].content)
-        assert captured[1].content == "Let me check"
-        assert captured[1].token == Tools.get_token_count("Let me check")
+        ai_content_data = json.loads(captured[1].content)
+        assert ai_content_data["data"]["content"] == "Let me check"
+        assert captured[1].token == Tools.get_token_count(captured[1].content)
 
     asyncio.run(run())
 
@@ -140,10 +131,9 @@ def test_checkpointer_aput_persists_latest_tool_result_message() -> None:
         assert len(captured) == 1
         assert captured[0].msg_type == "tool_result"
         assert captured[0].sender == "web_search"
-        assert captured[0].tool_call_id == "call-1"
-        assert captured[0].tool_name == "web_search"
-        assert captured[0].content == "sunny"
-        assert captured[0].token == Tools.get_token_count("sunny")
+        content_data = json.loads(captured[0].content)
+        assert content_data["data"]["content"] == "sunny"
+        assert captured[0].token == Tools.get_token_count(captured[0].content)
 
     asyncio.run(run())
 
@@ -184,8 +174,9 @@ def test_checkpointer_aput_prefers_session_db_id_from_config() -> None:
 
         assert len(captured) == 1
         assert captured[0].session_id == 23
-        assert captured[0].thread_id == "thread-3"
-        assert captured[0].content == "hello"
+        assert captured[0].step_id == "checkpoint-3"
+        content_data = json.loads(captured[0].content)
+        assert content_data["data"]["content"] == "hello"
 
     asyncio.run(run())
 
