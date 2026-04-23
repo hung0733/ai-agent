@@ -14,8 +14,8 @@ from sqlalchemy.orm import selectinload
 from backend.db.config import async_session_factory
 from backend.db.entity import AgentEntity, SessionEntity
 from backend.graph.agent import SUMMARY_TRIGGER_TOKEN, SUMMARY_USAGE_TOKEN, workflow
-from backend.graph.checkpoint import ExtLanggraphCheckpointer
 from backend.graph.graph_node import GraphNode
+from backend.graph.graph_store import GraphStore
 from backend.msg_queue.models import StreamChunk
 from backend.tools import SandboxFileSystem
 from i18n import _
@@ -30,12 +30,12 @@ class Agent:
     agent_db_id: int
     session_db_id: int
     user_db_id: int
-    
+
     agent_id: str
     session_id: str
-    
+
     recv_agent_name: str
-    sender_agent_name:str
+    sender_agent_name: str
 
     stm_trigger_token: int
     stm_summary_token: int
@@ -60,10 +60,11 @@ class Agent:
 
         self.stm_trigger_token = SUMMARY_TRIGGER_TOKEN
         self.stm_summary_token = SUMMARY_USAGE_TOKEN
-        
+
+        """初始化帶有 PostgreSQL checkpointer 的 graph。"""
         if Agent._graph is None:
-            Agent._graph = workflow.compile(checkpointer=ExtLanggraphCheckpointer())
-            
+            Agent._graph = workflow.compile(checkpointer=GraphStore.checkpointer)
+
     @classmethod
     async def get_db_agent(
         cls, agent_id: str, session_id: str
@@ -95,7 +96,9 @@ class Agent:
                 select(SessionEntity)
                 .where(SessionEntity.session_id == session_id)
                 .options(
-                    selectinload(SessionEntity.recv_agent).selectinload(AgentEntity.user),
+                    selectinload(SessionEntity.recv_agent).selectinload(
+                        AgentEntity.user
+                    ),
                     selectinload(SessionEntity.sender_agent),
                 )
             )
@@ -109,7 +112,9 @@ class Agent:
             sender_agent = session_entity.sender_agent
 
             recv_agent_name = recv_agent.name if recv_agent else ""
-            sender_agent_name = sender_agent.name if sender_agent else recv_agent.user.name
+            sender_agent_name = (
+                sender_agent.name if sender_agent else recv_agent.user.name
+            )
 
             return (
                 agent.id,
@@ -123,8 +128,16 @@ class Agent:
 
     @classmethod
     async def get_agent(cls, agent_id: str, session_id: str):
-        agent_db_id, session_db_id, user_db_id, agent_id, session_id, recv_agent_name, sender_agent_name = await Agent.get_db_agent(agent_id, session_id)
-        
+        (
+            agent_db_id,
+            session_db_id,
+            user_db_id,
+            agent_id,
+            session_id,
+            recv_agent_name,
+            sender_agent_name,
+        ) = await Agent.get_db_agent(agent_id, session_id)
+
         return cls(
             agent_db_id=agent_db_id,
             agent_id=agent_id,
@@ -134,7 +147,7 @@ class Agent:
             recv_agent_name=recv_agent_name,
             sender_agent_name=sender_agent_name,
         )
-    
+
     async def send(
         self,
         models: list[BaseChatModel],
@@ -143,28 +156,58 @@ class Agent:
         think_mode: bool,
         metadata: Dict[str, Any],
     ) -> AsyncGenerator[StreamChunk, None]:
-        
+        async for chunk in Agent.proc_send(
+            agent=self,
+            models=models,
+            sys_prompt=sys_prompt,
+            message=message,
+            think_mode=think_mode,
+            metadata=metadata,
+            graph=Agent._graph,
+        ):
+            yield chunk
+
+    @staticmethod
+    async def proc_send(
+        agent: Agent,
+        models: list[BaseChatModel],
+        sys_prompt: str,
+        message: str,
+        think_mode: bool,
+        metadata: Dict[str, Any],
+        graph: Any,
+    ) -> AsyncGenerator[StreamChunk, None]:
+
         try:
             # 準備 config
+            step_id = metadata.get("step_id", f"step_{int(time.time())}")
             config = GraphNode.prepare_chat_node_config(
-                thread_id=self.session_id,
+                thread_id=agent.session_id,
                 models=models,
                 sys_prompt=sys_prompt,
                 involves_secrets=False,
                 think_mode=think_mode,
-                agent_db_id=self.agent_db_id,
-                session_db_id=self.session_db_id,
-                user_db_id=self.user_db_id,
+                agent_db_id=agent.agent_db_id,
+                session_db_id=agent.session_db_id,
+                user_db_id=agent.user_db_id,
+                step_id=step_id,
                 args=metadata,
-                sender_name=self.sender_agent_name,
-                recv_name=self.recv_agent_name,
-                sandbox=SandboxFileSystem(agent_id=self.agent_id),
-                stm_trigger_token=self.stm_trigger_token,
-                stm_summary_token=self.stm_summary_token,
+                sender_name=agent.sender_agent_name,
+                recv_name=agent.recv_agent_name,
+                sandbox=SandboxFileSystem(agent_id=agent.agent_id),
+                stm_trigger_token=agent.stm_trigger_token,
+                stm_summary_token=agent.stm_summary_token,
             )
 
-            async for chunk in Agent._graph.astream(
-                {"messages": [HumanMessage(content=message, additional_kwargs={"datetime": datetime.now(timezone.utc)})]},
+            async for chunk in graph.astream(
+                {
+                    "messages": [
+                        HumanMessage(
+                            content=message,
+                            additional_kwargs={"datetime": datetime.now(timezone.utc)},
+                        )
+                    ]
+                },
                 config=config,
                 stream_mode="messages",
             ):
@@ -178,9 +221,7 @@ class Agent:
                 # 我哋只處理 LLM 嘔出嚟嘅消息，忽略其他 LangGraph 嘅系統事件
                 if isinstance(msg, (AIMessage, AIMessageChunk)):
                     # 處理 Thinking (思考)
-                    reasoning_content = msg.additional_kwargs.get(
-                        "reasoning_content"
-                    )
+                    reasoning_content = msg.additional_kwargs.get("reasoning_content")
                     if reasoning_content:
                         # logger.debug(
                         #     f"🧠 收到推理內容，長度：{len(reasoning_content)}"
@@ -192,8 +233,8 @@ class Agent:
                         )
 
                     # 處理 Tool Calls (工具)
-                    if hasattr(msg, "tool_call_chunks") and msg.tool_call_chunks: # type: ignore
-                        for tool_chunk in msg.tool_call_chunks: # type: ignore
+                    if hasattr(msg, "tool_call_chunks") and msg.tool_call_chunks:  # type: ignore
+                        for tool_chunk in msg.tool_call_chunks:  # type: ignore
                             # logger.debug(
                             #     f"🔧 收到工具調用：{tool_chunk.get('name')}"
                             # )
@@ -203,7 +244,7 @@ class Agent:
                                 data={"tool_call": tool_chunk},
                                 timestamp=time.time(),
                             )
-                    elif hasattr(msg, "tool_call") and msg.tool_call: # type: ignore
+                    elif hasattr(msg, "tool_call") and msg.tool_call:  # type: ignore
                         for tc in getattr(msg, "tool_calls", []):
                             # logger.debug(
                             #     f"🔧 收到工具調用：{tool_chunk.get('name')}"
@@ -222,7 +263,7 @@ class Agent:
                             if isinstance(msg.content, str)
                             else str(msg.content)
                         )
-                        #logger.debug(f"💬 收到內容，長度：{len(content)}")
+                        # logger.debug(f"💬 收到內容，長度：{len(content)}")
                         yield StreamChunk(
                             chunk_type="content",
                             content=content,
@@ -243,9 +284,9 @@ class Agent:
         except Exception as e:
             logger.error(
                 _("LLM 處理失敗，agentId: %s, sessionId: %s (%s): %s\n%s"),
-                self.agent_id,
-                self.session_id,
-                self.recv_agent_name,
+                agent.agent_id,
+                agent.session_id,
+                agent.recv_agent_name,
                 e,
                 traceback.format_exc(),
             )

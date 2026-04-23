@@ -19,7 +19,9 @@ def test_prepare_chat_node_config_includes_session_db_id() -> None:
         agent_db_id=11,
         session_db_id=22,
         user_db_id=33,
+        step_id="step-123",
     )
 
     assert config["configurable"]["session_db_id"] == 22
     assert config["configurable"]["user_db_id"] == 33
+    assert config["configurable"]["step_id"] == "step-123"
