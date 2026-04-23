@@ -12,6 +12,7 @@ from db.entity import AgentMsgHistEntity
 class AgentMsgHistCreate(BaseModel):
     session_id: int
     step_id: str | None = None
+    msg_idx: int = 0
     sender: str
     msg_type: str
     create_dt: datetime
@@ -26,6 +27,7 @@ class AgentMsgHistResponse(BaseModel):
     id: int
     session_id: int
     step_id: str | None
+    msg_idx: int
     sender: str
     msg_type: str
     create_dt: datetime
@@ -41,6 +43,7 @@ class AgentMsgHistResponse(BaseModel):
             id=entity.id,
             session_id=entity.session_id,
             step_id=entity.step_id,
+            msg_idx=entity.msg_idx,
             sender=entity.sender,
             msg_type=entity.msg_type,
             create_dt=entity.create_dt,

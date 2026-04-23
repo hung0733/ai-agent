@@ -17,6 +17,7 @@ class AgentMsgHistEntity(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     session_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("session.id"), nullable=False)
     step_id: Mapped[str | None] = mapped_column(String(200))
+    msg_idx: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     sender: Mapped[str] = mapped_column(String(80), nullable=False)
     msg_type: Mapped[str] = mapped_column(String(20), nullable=False)
     create_dt: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
