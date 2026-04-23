@@ -19,4 +19,11 @@ if "scheduler.manager" in sys.modules:
 if "scheduler.scheduler" in sys.modules:
     del sys.modules["scheduler.scheduler"]
 
+# Ensure memory module can be imported
+if "memory" not in sys.modules:
+    try:
+        import memory
+    except ImportError:
+        pass
+
 
