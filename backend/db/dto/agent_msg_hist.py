@@ -21,6 +21,7 @@ class AgentMsgHistCreate(BaseModel):
     is_stm_summary: bool = False
     is_ltm_summary: bool = False
     is_analyst: int
+    metadata: dict = {}
 
 
 class AgentMsgHistResponse(BaseModel):
@@ -36,6 +37,7 @@ class AgentMsgHistResponse(BaseModel):
     is_stm_summary: bool
     is_ltm_summary: bool
     is_analyst: int
+    metadata: dict
 
     @classmethod
     def from_entity(cls, entity: AgentMsgHistEntity) -> "AgentMsgHistResponse":
@@ -52,4 +54,5 @@ class AgentMsgHistResponse(BaseModel):
             is_stm_summary=entity.is_stm_summary,
             is_ltm_summary=entity.is_ltm_summary,
             is_analyst=entity.is_analyst,
+            metadata=entity.metadata or {},
         )

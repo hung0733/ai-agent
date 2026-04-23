@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, String, Text
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from db.base import Base
@@ -26,6 +26,7 @@ class AgentMsgHistEntity(Base):
     is_stm_summary: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     is_ltm_summary: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     is_analyst: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    meta_data: Mapped[dict] = mapped_column("metadata", JSON, nullable=False, default=dict)
 
     # Relationships
     session: Mapped["SessionEntity"] = relationship("SessionEntity", back_populates="msg_histories")
