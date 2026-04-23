@@ -27,3 +27,6 @@ sqlalchemy[asyncio]>=2.0.0
 
 # Task Scheduler
 croniter>=1.3.0
+
+# OpenAI SDK
+openai>=1.0.0
