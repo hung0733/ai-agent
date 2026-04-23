@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "backend"))
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from memory.store import MemoryStore
 
@@ -74,6 +74,32 @@ async def test_commit_messages(memory_store):
         
         with patch("memory.store.AgentMsgHistDAO", return_value=mock_dao):
             await memory_store.commit_messages(step_id="step_1", response=AIMessage(content="Hi there"))
+            
+            # 驗證 DAO 被調用
+            assert mock_dao.create_from_dto.called
+
+
+@pytest.mark.asyncio
+async def test_commit_messages_with_tool_result(memory_store):
+    """測試 commit_messages 處理 ToolMessage（Tool Result）。"""
+    memory_store._pending_commits["step_2"] = {
+        "ltm_message": None,
+        "last_message": HumanMessage(content="Run tool"),
+    }
+    
+    with patch("memory.store.async_session_factory") as mock_factory:
+        mock_session = AsyncMock()
+        mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+        
+        mock_dao = AsyncMock()
+        mock_dao.count_by_step = AsyncMock(return_value=0)
+        mock_dao.get_last_by_step = AsyncMock(return_value=None)
+        mock_dao.create_from_dto = AsyncMock()
+        
+        with patch("memory.store.AgentMsgHistDAO", return_value=mock_dao):
+            tool_response = ToolMessage(content="Tool output", tool_call_id="call_123")
+            await memory_store.commit_messages(step_id="step_2", response=tool_response)
             
             # 驗證 DAO 被調用
             assert mock_dao.create_from_dto.called
