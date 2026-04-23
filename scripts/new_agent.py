@@ -230,6 +230,7 @@ async def create_agent_in_db(
     user_db_id: int,
     agent_id: str,
     name: str,
+    agent_type: str = "agent",
 ) -> int:
     """在資料庫中創建 Agent 記錄。回傳 agent.id（資料庫主鍵）。"""
     async with async_session_factory() as session:
@@ -238,12 +239,13 @@ async def create_agent_in_db(
             agent_id=agent_id,
             name=name,
             is_active=True,
+            agent_type=agent_type,
         )
         session.add(agent)
         await session.flush()
         await session.refresh(agent)
         await session.commit()
-        logger.info(_("創建 Agent：%s (id=%s, agent_id=%s)"), name, agent.id, agent.agent_id)
+        logger.info(_("創建 Agent：%s (id=%s, agent_id=%s, type=%s)"), name, agent.id, agent.agent_id, agent_type)
         return agent.id
 
 
@@ -287,6 +289,71 @@ async def save_soul_to_db(agent_db_id: int, soul_content: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Default Schedule Creation
+# ---------------------------------------------------------------------------
+
+async def create_default_schedules(agent_db_id: int) -> None:
+    """為新建立嘅 agent 創建兩個預設 method schedule。
+
+    - review_ltm: 每日 01:00
+    - review_msg: 每日 02:00
+    """
+    from croniter import croniter
+    from db.dao.schedule_dao import ScheduleDAO
+    from db.dao.task_dao import TaskDAO
+    from db.dto.schedule import ScheduleCreate
+    from db.dto.task import TaskCreate
+    from db.entity import ScheduleEntity, TaskEntity
+    from utils.timezone import now_server
+
+    schedules_config = [
+        {
+            "name": "LTM Review",
+            "content": "/agent/summary@review_ltm",
+            "cron": "0 1 * * *",
+        },
+        {
+            "name": "Message Review",
+            "content": "/agent/summary@review_msg",
+            "cron": "0 2 * * *",
+        },
+    ]
+
+    async with async_session_factory() as session:
+        task_dao = TaskDAO(session)
+        schedule_dao = ScheduleDAO(session)
+
+        for config in schedules_config:
+            next_run = croniter(config["cron"], now_server()).get_next(datetime)
+
+            task_dto = TaskCreate(
+                name=config["name"],
+                task_type="method",
+                content=config["content"],
+                agent_id=agent_db_id,
+                status="schedule",
+                next_process_dt=next_run,
+            )
+            task = await task_dao.create_from_dto(task_dto)
+            logger.info(_("已創建 task：%s (id=%s)"), config["name"], task.id)
+
+            schedule_dto = ScheduleCreate(
+                task_id=task.id,
+                cron_expression=config["cron"],
+                enabled=True,
+                next_run_at=next_run,
+            )
+            schedule = await schedule_dao.create_from_dto(schedule_dto)
+            logger.info(_("已創建 schedule：%s (id=%s, cron=%s)"), config["name"], schedule.id, config["cron"])
+
+        await session.commit()
+
+    print(_("已創建預設 schedule："))
+    for config in schedules_config:
+        print(f"  - {config['name']}: {config['cron']}")
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -308,6 +375,17 @@ async def main() -> None:
     if not user_name:
         user_name = "default_user"
 
+    # Step 3: Select agent type
+    print()
+    print(_("請選擇 Agent 類型："))
+    print("  1) agent")
+    print("  2) supervisor")
+    type_choice = input(_("請輸入選項 (1-2，預設 1): ")).strip()
+    if type_choice == "2":
+        agent_type = "supervisor"
+    else:
+        agent_type = "agent"
+    print(_("已選擇 Agent 類型：%s") % agent_type)
     print()
     print(_("正在初始化資料庫..."))
     await init_db()
@@ -321,7 +399,10 @@ async def main() -> None:
 
         agent_uuid = str(uuid.uuid4())
         agent_id_str = f"agent-{agent_uuid}"
-        agent_db_id = await create_agent_in_db(user_db_id, agent_id_str, agent_name)
+        agent_db_id = await create_agent_in_db(user_db_id, agent_id_str, agent_name, agent_type)
+
+        # Create default schedules
+        await create_default_schedules(agent_db_id)
 
         # Create default session
         session_id = f"default-{agent_uuid}"
@@ -337,6 +418,7 @@ async def main() -> None:
         print(_("✅ Agent 建立完成！"))
         print(f"   {_('名稱')}: {agent_name}")
         print(f"   {_('Agent ID')}: {agent_id_str}")
+        print(f"   {_('Agent 類型')}: {agent_type}")
         print(f"   {_('Session ID')}: {session_id}")
         print(f"   {_('SOUL.md')}: {_('已儲存至資料庫')}")
         print("=" * 60)
