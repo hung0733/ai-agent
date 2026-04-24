@@ -5,19 +5,21 @@ import traceback
 from datetime import datetime, timezone
 import logging
 from typing import Any, AsyncGenerator, Dict
+import uuid
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from backend.db.config import async_session_factory
-from backend.db.entity import AgentEntity, SessionEntity
-from backend.graph.agent import SUMMARY_TRIGGER_TOKEN, SUMMARY_USAGE_TOKEN, workflow
-from backend.graph.graph_node import GraphNode
-from backend.graph.graph_store import GraphStore
-from backend.msg_queue.models import StreamChunk
-from backend.tools import SandboxFileSystem
+from db.config import async_session_factory
+from db.entity import AgentEntity, SessionEntity
+from graph.agent import SUMMARY_TRIGGER_TOKEN, SUMMARY_USAGE_TOKEN, workflow
+from graph.graph_node import GraphNode
+from graph.graph_store import GraphStore
+from models.llm import LLMSet
+from msg_queue.models import StreamChunk
+from tools import SandboxFileSystem
 from i18n import _
 
 
@@ -150,7 +152,7 @@ class Agent:
 
     async def send(
         self,
-        models: list[BaseChatModel],
+        models: LLMSet,
         sys_prompt: str,
         message: str,
         think_mode: bool,
@@ -170,7 +172,7 @@ class Agent:
     @staticmethod
     async def proc_send(
         agent: Agent,
-        models: list[BaseChatModel],
+        models: LLMSet,
         sys_prompt: str,
         message: str,
         think_mode: bool,
@@ -180,7 +182,7 @@ class Agent:
 
         try:
             # 準備 config
-            step_id = metadata.get("step_id", f"step_{int(time.time())}")
+            step_id = f"step-{uuid.uuid4()}"
             config = GraphNode.prepare_chat_node_config(
                 thread_id=agent.session_id,
                 models=models,

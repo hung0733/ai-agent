@@ -37,7 +37,6 @@ class ScheduleManager:
         )
         result = await self._session.execute(stmt)
         schedules = list(result.scalars().all())
-        logger.debug(_("已載入 %d 個 enabled schedule"), len(schedules))
         return schedules
 
     async def mark_schedule_executed(

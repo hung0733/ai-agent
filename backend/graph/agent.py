@@ -1,20 +1,19 @@
 import logging
 from datetime import datetime
-from typing import Any, Dict
+from typing import Annotated, Any, Dict, Optional, TypedDict
 
 from langchain_core.messages import (
-    AIMessage,
     BaseMessage,
-    HumanMessage,
-    SystemMessage,
     ToolMessage,
 )
 from langchain_core.runnables import RunnableConfig
-from langgraph.graph import END, START, MessagesState, StateGraph
+from langgraph.graph import END, START, StateGraph
 from langchain_core.language_models.chat_models import BaseChatModel
+from graph.graph_node import GraphNode
 from i18n import _
-from backend.utils.tools import Tools
-from backend.agent.summary import review_stm
+from utils.tools import Tools
+from agent.summary import review_stm
+from models.llm import LLMSet
 
 logger = logging.getLogger(__name__)
 
@@ -22,115 +21,37 @@ SUMMARY_TRIGGER_TOKEN: int = 10000
 SUMMARY_USAGE_TOKEN: int = 5000
 
 
-class AgentState(MessagesState):
-    summary: str
+class AgentState(TypedDict):
+    messages: Annotated[list[BaseMessage], GraphNode.replace_with_last]
 
 
 async def chat_node(state: AgentState, config: RunnableConfig):
     # 由 config 攞返 LLM 同 System Prompt 出嚟
-    models: list[BaseChatModel] = config["configurable"]["models"]  # type: ignore
+    models: LLMSet = config["configurable"]["models"]  # type: ignore
     sys_prompt: str = config["configurable"]["sys_prompt"] or ""  # type: ignore
     think_mode: bool = config["configurable"]["think_mode"]  # type: ignore
     args: Dict[str, Any] = config["configurable"]["args"]  # type: ignore
 
-    messages_to_send: list[BaseMessage] = []
-
-    # 只有非 backend 任務先入 system prompt
-    if sys_prompt:
-        messages_to_send.append(SystemMessage(content=sys_prompt))
-        logger.debug(
-            _("已加入 System Prompt (長度：%s, Token: %s)"),
-            len(sys_prompt),
-            Tools.get_token_count(sys_prompt),
-        )
-
-    session_db_id = config["configurable"].get("session_db_id")  # type: ignore
-    if session_db_id is not None:
-        from db.config import async_session_factory
-        from db.dao.short_term_mem_dao import ShortTermMemDAO
-
-        async with async_session_factory() as db_session:
-            mem_dao = ShortTermMemDAO(db_session)
-            memories = await mem_dao.list_recent_by_token_limit(
-                session_db_id, max_token=10000
-            )
-            if memories:
-                summary_content = "\n".join(m.content for m in memories)
-                messages_to_send.append(
-                    AIMessage(
-                        content=_(
-                            "以下是過去對話的重點總結，請作為背景記憶參考：\n{}"
-                        ).format(summary_content)
-                    )
-                )
-
-    # LTM Search - 每次 human message 都檢索
     last_message: BaseMessage = state["messages"][-1]
-    ltm_json_content: str = ""
-    if session_db_id is not None and isinstance(last_message, HumanMessage):
-        try:
-            from backend.agent.ltm_search import search_ltm_for_chat
-
-            ltm_json_content = await search_ltm_for_chat(
-                user_query=last_message.content,
-                session_db_id=session_db_id,
-            )
-        except Exception as exc:
-            logger.warning(_("LTM 檢索失敗，跳過：%s"), exc)
-
-    message: BaseMessage
-    msg_count: int = 0
-    msg_token: int = 0
-    msg_len: int = 0
-
-    # 遍历所有消息，但不包括最后一条
-    for message in state["messages"][:-1]:
-        messages_to_send.append(message)
-        msg_count += 1
-        msg_token += Tools.get_token_count(message.content)
-        msg_len += len(message.content)
-
-    logger.info(
-        _("Message History, Count: %s, Length: %s, Token: %s"),
-        msg_count,
-        msg_len,
-        msg_token,
+    messages: list[BaseMessage] = await GraphNode.prepare_messages(
+        config, sys_prompt, last_message
     )
-
-    # 在 last_message 前加入当前日期时间
-    current_datetime_msg = AIMessage(
-        content=f"當前系統時間 (Current Datetime): {datetime.now().strftime('%Y-%m-%d %H:%M')}"
-    )
-    messages_to_send.append(current_datetime_msg)
-
-    # 在日期時間之後、last_message 之前加入 LTM 結果（單個 JSON array 消息）
-    if ltm_json_content:
-        messages_to_send.append(
-            AIMessage(
-                content=_("長期記憶檢索結果：\n{}").format(ltm_json_content)
-            )
-        )
-
-    # 最后加入 last_message
-    messages_to_send.append(last_message)
-    logger.info(
-        _("Send Message, Length: %s, Token: %s"),
-        len(last_message.content),
-        Tools.get_token_count(last_message.content),
-    )
-    logger.debug(_("Send Message: %s"), last_message.content)
 
     # 綁定 file system tools 到 model
     sandbox = config["configurable"].get("sandbox")  # type: ignore
-    model_to_use = models[0]
+
+    model_to_use = models.getModel(2)
+    if not model_to_use:
+        raise ValueError(_("LLM model 未設置"))
+
     if sandbox is not None:
-        from backend.tools import get_file_tools
+        from tools import get_file_tools
 
         file_tools = get_file_tools(sandbox)
         model_to_use = model_to_use.bind_tools(file_tools)
 
     # 呼叫模型 (用 ainvoke 獲取完整回應)
-    response = await model_to_use.ainvoke(messages_to_send)
+    response = await model_to_use.ainvoke(messages)
 
     if hasattr(response, "tool_calls") and len(response.tool_calls) > 0:
         for tc in getattr(response, "tool_calls", []):
@@ -146,6 +67,8 @@ async def chat_node(state: AgentState, config: RunnableConfig):
     else:
         logger.info(_("💬 收到內容，長度：%s") % len(response.content))
         logger.debug(_("💬 收到內容：%s") % response.content)
+
+    await GraphNode.commit_messages(config, [response])
 
     # 返回最新嘅 AIMessage，LangGraph 會自動 append 落 State 度
     return {"messages": [response]}
@@ -163,15 +86,9 @@ def should_continue(state: AgentState) -> str:
     return END
 
 
-# 建立藍圖 (Workflow)
-workflow = StateGraph(AgentState)
-
-workflow.add_node("chat", chat_node)
-
-
 async def tool_executor_node(state: AgentState, config: RunnableConfig):
     """從 config 獲取 sandbox 並執行 tool calls。"""
-    from backend.tools import get_file_tools
+    from tools import get_file_tools
 
     messages = state["messages"]
     last_message = messages[-1]
@@ -227,6 +144,8 @@ async def tool_executor_node(state: AgentState, config: RunnableConfig):
                 )
             )
 
+        await GraphNode.commit_messages(config, results)
+
     return {"messages": results}
 
 
@@ -237,7 +156,7 @@ async def review_stm_node(state: AgentState, config: RunnableConfig):
     during tool call loops.
     """
     session_db_id = config["configurable"].get("session_db_id")  # type: ignore
-    models: list[BaseChatModel] = config["configurable"].get("models", [])  # type: ignore
+    models: LLMSet = config["configurable"].get("models", [])  # type: ignore
     stm_trigger_token = config["configurable"].get("stm_trigger_token", SUMMARY_TRIGGER_TOKEN)  # type: ignore
     stm_summary_token = config["configurable"].get("stm_summary_token", SUMMARY_USAGE_TOKEN)  # type: ignore
 
@@ -247,7 +166,7 @@ async def review_stm_node(state: AgentState, config: RunnableConfig):
 
     result = await review_stm(
         session_db_id=session_db_id,
-        model=models[0],
+        model=models.getSysActModel(),
         stm_trigger_token=stm_trigger_token,
         stm_summary_token=stm_summary_token,
     )
@@ -275,11 +194,17 @@ async def review_stm_node(state: AgentState, config: RunnableConfig):
     return {"messages": kept_messages}
 
 
+# 建立藍圖 (Workflow)
+workflow = StateGraph(AgentState)
+
+workflow.add_node("chat", chat_node)
 workflow.add_node("tools", tool_executor_node)
 workflow.add_node("review_stm", review_stm_node)
+
 workflow.add_edge(START, "chat")
 workflow.add_conditional_edges("chat", should_continue, {"tools": "tools", END: END})
 workflow.add_edge("tools", "review_stm")
 workflow.add_edge("review_stm", "chat")
 
+# 預編譯的 graph（不使用 checkpointer）
 graph = workflow.compile()

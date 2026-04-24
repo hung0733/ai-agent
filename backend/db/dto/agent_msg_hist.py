@@ -54,5 +54,5 @@ class AgentMsgHistResponse(BaseModel):
             is_stm_summary=entity.is_stm_summary,
             is_ltm_summary=entity.is_ltm_summary,
             is_analyst=entity.is_analyst,
-            metadata=entity.metadata or {},
+            metadata=entity.meta_data or {},
         )

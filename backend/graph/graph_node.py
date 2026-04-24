@@ -5,16 +5,29 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 
-from backend.db.dao.short_term_mem_dao import ShortTermMemDAO
-from backend.memory.store import MemoryStore
-from backend.utils.tools import Tools
+from db.dao.short_term_mem_dao import ShortTermMemDAO
+from memory.store import MemoryStore
+from models.llm import LLMSet
+from utils.tools import Tools
 from i18n import _
-from db.config import async_session_factory
 
 logger = logging.getLogger(__name__)
 
 
 class GraphNode:
+    @staticmethod
+    async def commit_messages(config: RunnableConfig, responses: list[BaseMessage]):
+        session_db_id = config["configurable"].get("session_db_id")  # type: ignore
+        step_id = config["configurable"].get("step_id")  # type: ignore
+        sender_name: str = config["configurable"].get("sender_name")  # type: ignore
+        recv_name: str = config["configurable"].get("recv_name")  # type: ignore
+
+        if session_db_id is not None and step_id is not None:
+            memory_store = MemoryStore(session_db_id)
+            await memory_store.commit_messages(
+                step_id, sender_name, recv_name, responses
+            )
+
     @staticmethod
     async def prepare_messages(
         config: RunnableConfig, sys_prompt: str, last_message: BaseMessage
@@ -31,10 +44,10 @@ class GraphNode:
 
             session_db_id = config["configurable"].get("session_db_id")  # type: ignore
             step_id = config["configurable"].get("step_id")  # type: ignore
-            
+
             if session_db_id is not None and step_id is not None:
                 memory_store = MemoryStore(session_db_id)
-                messages = await memory_store.prepare_messages(step_id, last_message)
+                messages += await memory_store.prepare_messages(step_id, last_message)
 
         return messages
 
@@ -48,7 +61,7 @@ class GraphNode:
     @staticmethod
     def prepare_chat_node_config(
         thread_id: str,
-        models: list[BaseChatModel],
+        models: LLMSet,
         sys_prompt: str,
         involves_secrets: bool,
         think_mode: Optional[bool],

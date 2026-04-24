@@ -26,10 +26,10 @@ logger = logging.getLogger(__name__)
 
 def _convert_message(message: BaseMessage) -> dict[str, Any]:
     """Convert a langchain BaseMessage to OpenAI API format.
-    
+
     Args:
         message: langchain BaseMessage instance
-        
+
     Returns:
         Dict with 'role' and 'content' keys, optionally 'tool_calls' or 'tool_call_id'
     """
@@ -54,20 +54,20 @@ def _convert_message(message: BaseMessage) -> dict[str, Any]:
 
 class OpenAIClient:
     """Async OpenAI API client.
-    
+
     Args:
         base_url: OpenAI API endpoint URL
         api_key: API authentication key
         model: Model name (e.g., "gpt-4", "gpt-3.5-turbo")
     """
-    
+
     def __init__(self, base_url: str, api_key: str, model: str) -> None:
         self._client = AsyncOpenAI(
             base_url=base_url,
             api_key=api_key,
         )
         self._model = model
-    
+
     def _create_chunk(
         self,
         chunk_type: str,
@@ -75,12 +75,12 @@ class OpenAIClient:
         data: Optional[dict[str, Any]] = None,
     ) -> StreamChunk:
         """Create a StreamChunk with timestamp.
-        
+
         Args:
             chunk_type: Type of chunk ("content", "think", "tool", "tool_result", "done")
             content: Text content
             data: Extra structured data
-            
+
         Returns:
             StreamChunk instance
         """
@@ -90,16 +90,16 @@ class OpenAIClient:
             data=data,
             timestamp=time.time(),
         )
-    
+
     async def astream(self, messages: list[BaseMessage]) -> AsyncIterator[StreamChunk]:
         """Stream LLM response as AsyncIterator of StreamChunk.
-        
+
         Args:
             messages: List of langchain BaseMessage
-            
+
         Yields:
             StreamChunk for each piece of content (think, content, tool, done)
-            
+
         Raises:
             ValueError: If messages are invalid
             APIError: If API request fails
@@ -108,25 +108,25 @@ class OpenAIClient:
         """
         try:
             openai_messages = [_convert_message(msg) for msg in messages]
-            
+
             logger.debug(
                 _("OpenAI 請求: model=%s, messages=%d"),
                 self._model,
                 len(openai_messages),
             )
-            
+
             stream = await self._client.chat.completions.create(
                 model=self._model,
-                messages=openai_messages, # type: ignore
+                messages=openai_messages,  # type: ignore
                 stream=True,
-            ) # type: ignore
-            
+            )  # type: ignore
+
             async for chunk in stream:
                 if not chunk.choices:
                     continue
-                    
+
                 delta = chunk.choices[0].delta
-                
+
                 # Handle tool calls
                 if delta.tool_calls:
                     for tool_call in delta.tool_calls:
@@ -143,27 +143,29 @@ class OpenAIClient:
                             chunk_type="tool",
                             data=tool_data,
                         )
-                
+
                 # Handle thinking/reasoning content (some models support this)
-                thinking_content = getattr(delta, "reasoning_content", None) or getattr(delta, "thinking", None)
+                thinking_content = getattr(delta, "reasoning_content", None) or getattr(
+                    delta, "thinking", None
+                )
                 if thinking_content:
                     yield self._create_chunk(
                         chunk_type="think",
                         content=thinking_content,
                     )
-                
+
                 # Handle content
                 if delta.content is not None:
                     yield self._create_chunk(
                         chunk_type="content",
                         content=delta.content,
                     )
-                
+
                 # Handle finish reason
                 if chunk.choices[0].finish_reason == "stop":
                     yield self._create_chunk(chunk_type="done")
                     return
-                    
+
         except RateLimitError as exc:
             logger.error(_("OpenAI 請求頻率限制: %s"), exc)
             raise
@@ -179,22 +181,22 @@ class OpenAIClient:
         except Exception as exc:
             logger.error(_("OpenAI 未知錯誤: %s"), exc)
             raise
-    
+
     async def ainvoke(self, messages: list[BaseMessage]) -> list[StreamChunk]:
         """Invoke LLM and collect all stream chunks.
-        
+
         Merges streaming chunks into complete content/think/tool chunks.
-        
+
         Args:
             messages: List of langchain BaseMessage
-            
+
         Returns:
             List of complete StreamChunk objects (think, content, tool)
         """
         content_parts: list[str] = []
         think_parts: list[str] = []
         tool_chunks: list[StreamChunk] = []
-        
+
         async for chunk in self.astream(messages):
             if chunk.chunk_type == "content" and chunk.content:
                 content_parts.append(chunk.content)
@@ -203,19 +205,26 @@ class OpenAIClient:
             elif chunk.chunk_type == "tool":
                 tool_chunks.append(chunk)
             # Skip "done" chunk
-        
+
         result: list[StreamChunk] = []
-        
+
         if think_parts:
             result.append(
                 self._create_chunk(chunk_type="think", content="".join(think_parts))
             )
-        
+
         if content_parts:
             result.append(
                 self._create_chunk(chunk_type="content", content="".join(content_parts))
             )
-        
+
         result.extend(tool_chunks)
-        
+
         return result
+
+    def get_resp_content(self, response: list[StreamChunk]) -> str:
+        content: str = ""
+        for chunk in response:
+            if chunk.chunk_type == "content":
+                content = chunk.content  # type: ignore
+        return content

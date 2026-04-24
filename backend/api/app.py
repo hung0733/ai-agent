@@ -14,6 +14,7 @@ from scheduler import TaskScheduler
 from task_processor import TaskProcessor, register_method_handlers
 
 from api.routes.openai_chat import router as openai_chat_router
+from graph.graph_store import GraphStore
 
 
 @asynccontextmanager
@@ -31,6 +32,8 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     register_method_handlers()
     await processor.start()
 
+    _, lg_pool = await GraphStore.init_langgraph_checkpointer()
+
     try:
         yield
     finally:
@@ -38,6 +41,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         await scheduler.stop()
         qm.stop()
         await close_db()
+        await lg_pool.close()
 
 
 app = FastAPI(lifespan=lifespan)

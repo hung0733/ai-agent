@@ -106,8 +106,8 @@ def test_select_conversation_groups_below_threshold() -> None:
     from agent.summary import select_conversation_groups_for_summary
 
     groups = [
-        [SimpleNamespace(token=100)],
-        [SimpleNamespace(token=200)],
+        [SimpleNamespace(token=100, msg_type="human")],
+        [SimpleNamespace(token=200, msg_type="ai")],
     ]
 
     keep, summary = select_conversation_groups_for_summary(groups, 10000, 5000)
@@ -120,8 +120,8 @@ def test_select_conversation_groups_triggers_summary() -> None:
     from agent.summary import select_conversation_groups_for_summary
 
     groups = [
-        [SimpleNamespace(token=6000)],
-        [SimpleNamespace(token=6000)],
+        [SimpleNamespace(token=6000, msg_type="human")],
+        [SimpleNamespace(token=6000, msg_type="ai")],
     ]
 
     keep, summary = select_conversation_groups_for_summary(groups, 10000, 5000)
@@ -145,33 +145,33 @@ def test_compute_truncate_count_basic() -> None:
 
     groups = [
         [
-            SimpleNamespace(message_idx=0),
-            SimpleNamespace(message_idx=1),
+            SimpleNamespace(msg_idx=0),
+            SimpleNamespace(msg_idx=1),
         ],
     ]
 
     result = compute_truncate_count(groups)
-    # max message_idx is 1, so truncate count = 1
+    # max msg_idx is 1, so truncate count = 1
     assert result == 1
 
 
 def test_compute_truncate_count_multiple_groups() -> None:
-    """測試多個 summary group 時取最大 message_idx。"""
+    """測試多個 summary group 時取最大 msg_idx。"""
     from agent.summary import compute_truncate_count
 
     groups = [
         [
-            SimpleNamespace(message_idx=0),
-            SimpleNamespace(message_idx=1),
+            SimpleNamespace(msg_idx=0),
+            SimpleNamespace(msg_idx=1),
         ],
         [
-            SimpleNamespace(message_idx=3),
-            SimpleNamespace(message_idx=4),
+            SimpleNamespace(msg_idx=3),
+            SimpleNamespace(msg_idx=4),
         ],
     ]
 
     result = compute_truncate_count(groups)
-    # max message_idx across all groups is 4
+    # max msg_idx across all groups is 4
     assert result == 4
 
 
@@ -222,7 +222,21 @@ async def test_review_stm_below_threshold(monkeypatch: pytest.MonkeyPatch) -> No
             pass
 
         async def list_unsummarized_by_session(self, session_id: int) -> list:
-            record = SimpleNamespace(token=100, msg_type="human")
+            record = SimpleNamespace(
+                id=1,
+                token=100,
+                msg_type="human",
+                sender="User",
+                create_dt=datetime(2025, 1, 12, 10, 0, 0),
+                content="Hello",
+                step_id="test",
+                msg_idx=0,
+                session_id=1,
+                is_stm_summary=False,
+                is_ltm_summary=False,
+                is_analyst=0,
+                metadata={},
+            )
             return [record]
 
     monkeypatch.setattr(summary, "async_session_factory", FakeSessionContext)
@@ -269,6 +283,13 @@ async def test_review_stm_triggers_summary(monkeypatch: pytest.MonkeyPatch) -> N
                     create_dt=datetime(2025, 1, 12, 10, 0, 0),
                     content="Hello world",
                     message_idx=0,
+                    session_id=1,
+                    step_id="test",
+                    msg_idx=0,
+                    is_stm_summary=False,
+                    is_ltm_summary=False,
+                    is_analyst=0,
+                    metadata={},
                 ),
                 SimpleNamespace(
                     id=2,
@@ -278,6 +299,13 @@ async def test_review_stm_triggers_summary(monkeypatch: pytest.MonkeyPatch) -> N
                     create_dt=datetime(2025, 1, 12, 10, 1, 0),
                     content="Hi there",
                     message_idx=1,
+                    session_id=1,
+                    step_id="test",
+                    msg_idx=1,
+                    is_stm_summary=False,
+                    is_ltm_summary=False,
+                    is_analyst=0,
+                    metadata={},
                 ),
             ]
 

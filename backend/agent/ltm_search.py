@@ -7,6 +7,10 @@ import logging
 import os
 from typing import Any, Dict, List, Tuple
 
+from langchain_core.messages import HumanMessage
+from pydantic import SecretStr
+
+from models.llm import LLMSet
 from i18n import _
 
 logger = logging.getLogger(__name__)
@@ -17,22 +21,10 @@ def _get_embedding_model():
     from langchain_openai import OpenAIEmbeddings
 
     return OpenAIEmbeddings(
-        openai_api_base=os.getenv("EMBEDDING_LLM_ENDPOINT"),
-        openai_api_key=os.getenv("EMBEDDING_LLM_API_KEY", ""),
+        base_url=os.getenv("EMBEDDING_LLM_ENDPOINT"),
+        api_key=SecretStr(os.getenv("EMBEDDING_LLM_API_KEY", "NO_KEY")),
         model=os.getenv("EMBEDDING_LLM_MODEL", "text-embedding-3-small"),
         dimensions=int(os.getenv("EMBEDDING_DIMENSION", "2560")),
-    )
-
-
-def _get_routing_llm():
-    """獲取 ROUTING_LLM 用於查詢重寫。"""
-    from langchain_openai import ChatOpenAI
-
-    return ChatOpenAI(
-        openai_api_base=os.getenv("ROUTING_LLM_ENDPOINT"),
-        openai_api_key=os.getenv("ROUTING_LLM_API_KEY", ""),
-        model=os.getenv("ROUTING_LLM_MODEL", "qwen3.5-4b"),
-        temperature=0,
     )
 
 
@@ -62,7 +54,7 @@ async def _get_existing_taxonomy_by_agent(agent_id: int) -> str:
 
 async def search_ltm_for_chat(
     user_query: str,
-    session_db_id: str,
+    session_db_id: int,
 ) -> str:
     """為聊天界面執行完整的 LTM 搜索流程。
 
@@ -76,8 +68,8 @@ async def search_ltm_for_chat(
         JSON 數組字符串（無結果時返回空字符串）：
         '[{"content": "...", "sendDatetime": "..."}, ...]'
     """
-    from backend.agent.prompt import LTM_QUERY_REWRITE_PROMPT_TEMPLATE
-    from backend.vector.qdrant_client import QdrantClient
+    from agent.prompt import LTM_QUERY_REWRITE_PROMPT_TEMPLATE
+    from vector.qdrant_client import QdrantClient
     from db.config import async_session_factory
     from db.dao.session_dao import SessionDAO
 
@@ -90,7 +82,7 @@ async def search_ltm_for_chat(
         agent_id = session.recv_agent_id
 
         # 1. 獲取 ROUTING_LLM 並重寫查詢
-        routing_llm = _get_routing_llm()
+        routing_llm = LLMSet.getRteModel()
         qdrant_client = QdrantClient()
         await qdrant_client.ensure_collection(
             vector_size=int(os.getenv("EMBEDDING_DIMENSION", "2560"))
@@ -102,8 +94,10 @@ async def search_ltm_for_chat(
             user_query=user_query,
         )
 
-        rewrite_response = await routing_llm.ainvoke(rewrite_prompt)
-        rewrite_content = rewrite_response.content
+        rewrite_response = await routing_llm.ainvoke(
+            [HumanMessage(content=rewrite_prompt)]
+        )
+        rewrite_content = routing_llm.get_resp_content(rewrite_response)
         # 清理可能的 markdown 代碼塊
         if rewrite_content.startswith("```"):
             rewrite_content = rewrite_content.split("```")[1]
@@ -135,7 +129,6 @@ async def search_ltm_for_chat(
             room=topic_room,
             semantic_top_k=5,
             keyword_top_k=5,
-            structured_top_k=5,
         )
 
         # 4. 格式化為 JSON 數組
@@ -190,15 +183,15 @@ async def search_ltm(
             room=room,
         )
 
-        all_results = _merge_and_deduplicate(
-            semantic_results, keyword_results
-        )
+        all_results = _merge_and_deduplicate(semantic_results, keyword_results)
 
         if not all_results:
             logger.debug(_("無 LTM 搜索結果，agent_id=%s"), agent_id)
             return "", []
 
-        logger.info(_("找到 %s 條 LTM 相關記憶，agent_id=%s"), len(all_results), agent_id)
+        logger.info(
+            _("找到 %s 條 LTM 相關記憶，agent_id=%s"), len(all_results), agent_id
+        )
         return format_ltm_results(all_results), all_results
 
     except Exception as exc:
@@ -216,7 +209,9 @@ def _merge_and_deduplicate(
 
     for results in [semantic_results, keyword_results]:
         for point in results:
-            point_id = getattr(point, "id", None) or (getattr(point, "payload", None) or {}).get("id")
+            point_id = getattr(point, "id", None) or (
+                getattr(point, "payload", None) or {}
+            ).get("id")
             if point_id not in seen_ids:
                 seen_ids.add(point_id)
                 merged.append(point)
@@ -244,11 +239,9 @@ def format_ltm_results(points: List[Any]) -> str:
         content = payload.get("content", "")
         keywords = payload.get("keywords", [])
 
-        lines.append(
-            f"{i}. [{wing}/{room}] {content}"
-        )
+        lines.append(f"{i}. [{wing}/{room}] {content}")
         if keywords:
-            lines.append(_("   Keywords: %s") % ', '.join(keywords))
+            lines.append(_("   Keywords: %s") % ", ".join(keywords))
 
     return "\n".join(lines)
 
@@ -268,8 +261,10 @@ def format_ltm_results_as_json(points: List[Any]) -> List[Dict[str, str]]:
         content = payload.get("content", "")
         send_datetime = payload.get("create_dt") or payload.get("record_dt", "")
         if content:
-            results.append({
-                "content": content,
-                "sendDatetime": str(send_datetime),
-            })
+            results.append(
+                {
+                    "content": content,
+                    "sendDatetime": str(send_datetime),
+                }
+            )
     return results

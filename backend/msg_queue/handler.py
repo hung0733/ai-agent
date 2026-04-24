@@ -24,8 +24,9 @@ from pydantic import SecretStr
 
 from agent.agent import Agent
 from agent.prompt import apply_prompt_template
-from backend.agent.summary import review_stm
-from backend.utils.tools import Tools
+from agent.summary import review_stm
+from models.llm import LLMSet
+from utils.tools import Tools
 from i18n import _
 from msg_queue.manager import QueueManager, get_queue_manager
 from msg_queue.models import (
@@ -113,6 +114,7 @@ class MsgQueueHandler:
             else:
                 task.packed_prompt = await apply_prompt_template(
                     agent_db_id=task.agent.agent_db_id,
+                    agent_id=task.agent_id,
                     agent_name=task.agent.recv_agent_name,
                 )
 
@@ -160,15 +162,10 @@ class MsgQueueHandler:
         """Use SYS_ACT_LLM as the single system-level model selection."""
         logger.debug(_("任務 %s：select_llm_model"), task.id)
         try:
-            task.model_set = [
-                ChatOpenAI(
-                    base_url=Tools.require_env("SYS_ACT_LLM_ENDPOINT"),
-                    api_key=SecretStr(Tools.require_env("SYS_ACT_LLM_API_KEY")),
-                    model=Tools.require_env("SYS_ACT_LLM_MODEL"),
-                    streaming=True,
-                    stream_usage=True,
-                )
-            ]
+            if task.agent is None:
+                raise ValueError(_("Agent 未初始化 — 先執行 collect_db_data"))
+
+            task.model_set = await LLMSet.from_model(task.agent.agent_db_id)
             task.update_state(QueueTaskState.SELECTED_LLM_MODEL)
         except Exception as exc:
             logger.error(
@@ -193,7 +190,6 @@ class MsgQueueHandler:
 
             task.update_state(QueueTaskState.SENDING_TO_LLM)
 
-            models = task.model_set or []
             sys_prompt = task.packed_prompt or task.system_prompt or ""
             think_mode = task.think_mode if task.think_mode is not None else False
 
@@ -203,7 +199,7 @@ class MsgQueueHandler:
             tool_args: dict = {}
 
             async for chunk in task.agent.send(
-                models=models,
+                models=task.model_set,  # type: ignore
                 sys_prompt=sys_prompt,
                 message=task.packed_message,
                 think_mode=think_mode,
@@ -282,7 +278,6 @@ class MsgQueueHandler:
             task.error = str(exc)
             raise
 
-
     @staticmethod
     async def review_stm(task: QueueTask) -> None:
         """執行 STM review，完成後標記任務完成。"""
@@ -291,13 +286,12 @@ class MsgQueueHandler:
             if task.agent is None:
                 raise ValueError(_("Agent 未初始化"))
 
-            models = task.model_set or []
-            if not models:
+            if not task.model_set:
                 raise ValueError(_("LLM model 未設置"))
 
             result = await review_stm(
                 session_db_id=task.agent.session_db_id,
-                model=models[0],
+                model=task.model_set.sys_act_model,
                 stm_trigger_token=task.agent.stm_trigger_token,
                 stm_summary_token=task.agent.stm_summary_token,
             )
@@ -306,7 +300,8 @@ class MsgQueueHandler:
                 truncate_count, summary_groups, records = result
                 logger.info(
                     _("任務 %s：STM review 完成，截斷 %s 條記錄"),
-                    task.id, truncate_count,
+                    task.id,
+                    truncate_count,
                 )
             else:
                 logger.debug(_("任務 %s：STM review 無需要處理"), task.id)

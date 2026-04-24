@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from db.dao.base import BaseDAO
 from db.dto.llm_level import LlmLevelCreate, LlmLevelUpdate
@@ -19,6 +20,7 @@ class LlmLevelDAO(BaseDAO[LlmLevelEntity]):
         stmt = (
             select(LlmLevelEntity)
             .where(LlmLevelEntity.llm_group_id == llm_group_id)
+            .options(selectinload(LlmLevelEntity.llm_endpoint))
             .order_by(LlmLevelEntity.seq_no)
         )
         result = await self._session.execute(stmt)

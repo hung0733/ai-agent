@@ -27,6 +27,11 @@ class LlmLevelResponse(BaseModel):
     id: int
     llm_group_id: int
     llm_endpoint_id: int
+    name: str
+    endpoint: str
+    enc_key: Optional[str]
+    model_name: str
+    max_token: int
     level: int
     is_confidential: bool
     seq_no: int
@@ -40,4 +45,9 @@ class LlmLevelResponse(BaseModel):
             level=entity.level,
             is_confidential=entity.is_confidential,
             seq_no=entity.seq_no,
+            name=entity.llm_endpoint.name,
+            endpoint=entity.llm_endpoint.endpoint,
+            enc_key=entity.llm_endpoint.enc_key,
+            model_name=entity.llm_endpoint.model_name,
+            max_token=entity.llm_endpoint.max_token,
         )

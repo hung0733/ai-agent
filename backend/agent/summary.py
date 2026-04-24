@@ -8,17 +8,29 @@ import os
 from datetime import datetime, timezone
 
 from langchain_core.language_models import BaseChatModel
-from langchain_openai import ChatOpenAI
-from pydantic import SecretStr
+from langchain_core.messages import HumanMessage
 
-from agent.prompt import apply_ltm_prompt_template, apply_review_msg_prompt_template, apply_stm_prompt_template
+from agent.prompt import (
+    apply_ltm_prompt_template,
+    apply_review_msg_prompt_template,
+    apply_stm_prompt_template,
+)
+from client.openai import OpenAIClient
+from db.dto.agent_msg_hist import AgentMsgHistResponse
+from memory.store import MemoryStore
+from models.llm import LLMSet
 from db.config import async_session_factory
 from db.dao.agent_dao import AgentDAO
 from db.dao.agent_msg_hist_dao import AgentMsgHistDAO
 from db.dao.long_term_mem_dao import LongTermMemDAO
 from db.dao.memory_block_dao import MemoryBlockDAO
 from db.dao.short_term_mem_dao import ShortTermMemDAO
-from db.dto.memory import LongTermMemCreate, MemoryBlockCreate, MemoryBlockUpdate, ShortTermMemCreate
+from db.dto.memory import (
+    LongTermMemCreate,
+    MemoryBlockCreate,
+    MemoryBlockUpdate,
+    ShortTermMemCreate,
+)
 from utils.tools import Tools
 from vector.qdrant_client import QdrantClient
 from i18n import _
@@ -102,6 +114,33 @@ def group_records_by_human(records: list) -> list[list]:
     return groups
 
 
+def group_records_by_step_id(records: list) -> list[list]:
+    """按 step_id 分組記錄。
+
+    規則：相同 step_id 的記錄歸為同一組，step_id 為 None 的記錄單獨成組。
+
+    Args:
+        records: 按 message_idx 排序的記錄列表。
+
+    Returns:
+        分組後的記錄列表，例如 [[r1, r2], [r3, r4, r5]]
+    """
+    if not records:
+        return []
+
+    groups: dict[str | None, list] = {}
+    order: list[str | None] = []
+
+    for record in records:
+        step_id = record.step_id
+        if step_id not in groups:
+            groups[step_id] = []
+            order.append(step_id)
+        groups[step_id].append(record)
+
+    return [groups[step_id] for step_id in order]
+
+
 def select_conversation_groups_for_summary(
     groups: list[list],
     stm_trigger_token: int,
@@ -117,8 +156,11 @@ def select_conversation_groups_for_summary(
     Returns:
         (keep_groups, summary_groups) 兩個都是舊到新的順序。
     """
-    # 計算每組 token
-    group_tokens = [(group, sum(r.token for r in group)) for group in groups]
+    # 計算每組 token（只計 human/ai）
+    group_tokens = [
+        (group, sum(r.token for r in group if r.msg_type in ["human", "ai"]))
+        for group in groups
+    ]
 
     total_token = sum(t for _, t in group_tokens)
     if total_token <= stm_trigger_token:
@@ -149,7 +191,7 @@ def compute_truncate_count(summary_groups: list[list]) -> int:
         summary_groups: 被 summary 的記錄分組。
 
     Returns:
-        最大 message_idx，用於截斷 LangGraph state。
+        最大 msg_idx，用於截斷 LangGraph state。
     """
     if not summary_groups:
         return 0
@@ -157,8 +199,8 @@ def compute_truncate_count(summary_groups: list[list]) -> int:
     max_idx = -1
     for group in summary_groups:
         for record in group:
-            if record.message_idx > max_idx:
-                max_idx = record.message_idx
+            if record.msg_idx > max_idx:
+                max_idx = record.msg_idx
 
     return max(0, max_idx)
 
@@ -175,13 +217,7 @@ async def review_ltm(agent_id: str) -> dict:
     Returns:
         {"processed": int, "errors": int}
     """
-    model = ChatOpenAI(
-        base_url=Tools.require_env("SYS_ACT_LLM_ENDPOINT"),
-        api_key=SecretStr(Tools.require_env("SYS_ACT_LLM_API_KEY")),
-        model=Tools.require_env("SYS_ACT_LLM_MODEL"),
-        streaming=True,
-        stream_usage=True,
-    )
+    model = LLMSet.getSysActModel()
 
     processed_count = 0
     error_count = 0
@@ -200,13 +236,19 @@ async def review_ltm(agent_id: str) -> dict:
         agent_db_id = agent_entity.id
 
         # Step 1: 查詢未總結的記錄
-        records = await hist_dao.list_unsummarized_for_ltm(agent_id)
+        records: list[AgentMsgHistResponse] = [
+            AgentMsgHistResponse.from_entity(msg)
+            for msg in await hist_dao.list_unsummarized_for_ltm(agent_id)
+        ]
+
         if not records:
             logger.debug(_("無未總結的記錄，agent_id=%s"), agent_id)
             return {"processed": 0, "errors": 0, "memories": []}
 
         # Step 2: 按 session_id + date 分組
-        groups = _group_records_by_session_date(records)
+        groups: dict[tuple[str, str], list[AgentMsgHistResponse]] = (
+            _group_records_by_session_date(records)
+        )
 
         # Step 3: 初始化 Qdrant 客戶端
         qdrant_client = QdrantClient()
@@ -266,13 +308,7 @@ async def review_msg(agent_id: str) -> dict:
     Returns:
         {"processed": int, "errors": int, "updated_blocks": list[str]}
     """
-    model = ChatOpenAI(
-        base_url=Tools.require_env("SYS_ACT_LLM_ENDPOINT"),
-        api_key=SecretStr(Tools.require_env("SYS_ACT_LLM_API_KEY")),
-        model=Tools.require_env("SYS_ACT_LLM_MODEL"),
-        streaming=True,
-        stream_usage=True,
-    )
+    model = LLMSet.getSysActModel()
 
     processed_count = 0
     error_count = 0
@@ -291,7 +327,11 @@ async def review_msg(agent_id: str) -> dict:
         agent_db_id = agent_entity.id
 
         # Step 1: 查詢未分析的記錄
-        records = await hist_dao.list_unanalyzed_for_review(agent_id)
+        records: list[AgentMsgHistResponse] = [
+            AgentMsgHistResponse.from_entity(msg)
+            for msg in await hist_dao.list_unanalyzed_for_review(agent_id)
+        ]
+
         if not records:
             logger.debug(_("無未分析的記錄，agent_id=%s"), agent_id)
             return {"processed": 0, "errors": 0, "updated_blocks": []}
@@ -302,11 +342,23 @@ async def review_msg(agent_id: str) -> dict:
         # Step 3: 載入現有 memory blocks
         soul_blocks = await mem_block_dao.list_by_agent(agent_db_id, "SOUL")
         identity_blocks = await mem_block_dao.list_by_agent(agent_db_id, "IDENTITY")
-        user_profile_blocks = await mem_block_dao.list_by_agent(agent_db_id, "USER_PROFILE")
+        user_profile_blocks = await mem_block_dao.list_by_agent(
+            agent_db_id, "USER_PROFILE"
+        )
 
-        soul_content = max(soul_blocks, key=lambda b: b.last_upd_dt).content if soul_blocks else ""
-        identity_content = max(identity_blocks, key=lambda b: b.last_upd_dt).content if identity_blocks else ""
-        user_profile_content = max(user_profile_blocks, key=lambda b: b.last_upd_dt).content if user_profile_blocks else ""
+        soul_content = (
+            max(soul_blocks, key=lambda b: b.last_upd_dt).content if soul_blocks else ""
+        )
+        identity_content = (
+            max(identity_blocks, key=lambda b: b.last_upd_dt).content
+            if identity_blocks
+            else ""
+        )
+        user_profile_content = (
+            max(user_profile_blocks, key=lambda b: b.last_upd_dt).content
+            if user_profile_blocks
+            else ""
+        )
 
         # Step 4: 處理每組
         for group_key, group_records in groups.items():
@@ -362,7 +414,9 @@ async def review_msg(agent_id: str) -> dict:
     }
 
 
-def _group_records_by_session_date(records: list) -> dict:
+def _group_records_by_session_date(
+    records: list[AgentMsgHistResponse],
+) -> dict[tuple[str, str], list[AgentMsgHistResponse]]:
     """按 session_id + date 分組記錄。
 
     Args:
@@ -381,7 +435,9 @@ def _group_records_by_session_date(records: list) -> dict:
     return groups
 
 
-def _split_records_by_token_limit(records: list, limit: int = 30000) -> list[list]:
+def _split_records_by_token_limit(
+    records: list[AgentMsgHistResponse], limit: int = 30000
+) -> list[list[AgentMsgHistResponse]]:
     """按 token 限制分割記錄。
 
     Args:
@@ -394,18 +450,21 @@ def _split_records_by_token_limit(records: list, limit: int = 30000) -> list[lis
     if not records:
         return []
 
-    batches = []
-    current_batch = []
+    batches: list[list[AgentMsgHistResponse]] = []
+    current_batch: list[AgentMsgHistResponse] = []
     current_token = 0
 
     for record in records:
-        record_token = getattr(record, "token", 0)
-        if current_token + record_token > limit and current_batch:
-            batches.append(current_batch)
-            current_batch = []
-            current_token = 0
-        current_batch.append(record)
-        current_token += record_token
+        if record.msg_type in ["human", "ai"]:
+            record_token = getattr(record, "token", 0)
+            if current_token + record_token > limit and current_batch:
+                batches.append(current_batch)
+                current_batch = []
+                current_token = 0
+            current_batch.append(record)
+            current_token += record_token
+        else:
+            current_batch.append(record)
 
     if current_batch:
         batches.append(current_batch)
@@ -415,10 +474,10 @@ def _split_records_by_token_limit(records: list, limit: int = 30000) -> list[lis
 
 async def _process_ltm_batch(
     agent_id: int,
-    batch_records: list,
+    batch_records: list[AgentMsgHistResponse],
     ltm_dao: LongTermMemDAO,
     qdrant_client: QdrantClient,
-    model: BaseChatModel,
+    model: OpenAIClient,
 ) -> list[dict]:
     """處理單個 LTM 批次。
 
@@ -433,7 +492,11 @@ async def _process_ltm_batch(
         成功生成的 memories list，格式為 [{"wing": ..., "room": ..., "content": ...}]
     """
     try:
-        total_token = sum(getattr(r, "token", 0) for r in batch_records)
+        total_token = sum(
+            getattr(r, "token", 0)
+            for r in batch_records
+            if getattr(r, "msg_type", "") in ["human", "ai"]
+        )
         logger.info(
             _("LTM 批次處理開始 - agent=%s, 記錄數=%s, 總 token=%s"),
             agent_id,
@@ -442,23 +505,28 @@ async def _process_ltm_batch(
         )
 
         for i, record in enumerate(batch_records):
-            content_preview = (
-                (record.content[:100] + "...")
-                if record.content and len(record.content) > 100
-                else record.content
-            )
-            logger.debug(
-                _("記錄 [%s/%s] - id=%s, msg_type=%s, sender=%s, token=%s, content=%s"),
-                i + 1,
-                len(batch_records),
-                getattr(record, "id", "N/A"),
-                getattr(record, "msg_type", "N/A"),
-                getattr(record, "sender", "N/A"),
-                getattr(record, "token", 0),
-                content_preview,
-            )
+            if record.msg_type in ["human", "ai"]:
+                content_preview = (
+                    (record.content[:100] + "...")
+                    if record.content and len(record.content) > 100
+                    else record.content
+                )
+                logger.debug(
+                    _(
+                        "記錄 [%s/%s] - id=%s, msg_type=%s, sender=%s, token=%s, content=%s"
+                    ),
+                    i + 1,
+                    len(batch_records),
+                    getattr(record, "id", "N/A"),
+                    getattr(record, "msg_type", "N/A"),
+                    getattr(record, "sender", "N/A"),
+                    getattr(record, "token", 0),
+                    content_preview,
+                )
 
-        conversation = _format_conversation(batch_records)
+        # 只傳 human/ai 給 LLM
+        filtered_records = [r for r in batch_records if r.msg_type in ["human", "ai"]]
+        conversation = _format_conversation(filtered_records)
         logger.info(_("格式化後嘅對話內容:\n%s"), conversation)
 
         session_id = (
@@ -476,8 +544,8 @@ async def _process_ltm_batch(
             conversation, previous_memories=previous_memories or None
         )
 
-        response = await model.ainvoke(prompt)
-        content = response.content.strip()
+        response = await model.ainvoke([HumanMessage(content=prompt)])
+        content: str = model.get_resp_content(response)
 
         if content.startswith("```"):
             content = content.split("\n", 1)[-1] if "\n" in content else content[3:]
@@ -575,7 +643,7 @@ async def _process_review_msg_batch(
     agent_db_id: int,
     batch_records: list,
     mem_block_dao: MemoryBlockDAO,
-    model: BaseChatModel,
+    model: OpenAIClient,
     soul_content: str,
     identity_content: str,
     user_profile_content: str,
@@ -595,7 +663,11 @@ async def _process_review_msg_batch(
         成功更新的 blocks，格式為 {"SOUL": "...", "IDENTITY": "...", "USER_PROFILE": "..."}
     """
     try:
-        total_token = sum(getattr(r, "token", 0) for r in batch_records)
+        total_token = sum(
+            getattr(r, "token", 0)
+            for r in batch_records
+            if getattr(r, "msg_type", "") in ["human", "ai"]
+        )
         logger.info(
             _("review_msg 批次處理開始 - agent=%s, 記錄數=%s, 總 token=%s"),
             agent_db_id,
@@ -603,7 +675,9 @@ async def _process_review_msg_batch(
             total_token,
         )
 
-        conversation = _format_conversation(batch_records)
+        # 只傳 human/ai 給 LLM
+        filtered_records = [r for r in batch_records if r.msg_type in ["human", "ai"]]
+        conversation = _format_conversation(filtered_records)
         logger.info(_("格式化後嘅對話內容:\n%s"), conversation)
 
         prompt = await apply_review_msg_prompt_template(
@@ -613,8 +687,8 @@ async def _process_review_msg_batch(
             conversation=conversation,
         )
 
-        response = await model.ainvoke(prompt)
-        content = response.content.strip()
+        response = await model.ainvoke([HumanMessage(content=prompt)])
+        content: str = model.get_resp_content(response)
 
         if content.startswith("```"):
             content = content.split("\n", 1)[-1] if "\n" in content else content[3:]
@@ -672,7 +746,7 @@ async def _process_review_msg_batch(
 
 async def review_stm(
     session_db_id: int,
-    model: BaseChatModel,
+    model: OpenAIClient,
     stm_trigger_token: int,
     stm_summary_token: int,
     max_token: int = 30000,
@@ -687,13 +761,17 @@ async def review_stm(
         mem_dao = ShortTermMemDAO(session)
 
         # Step 1: 查詢未 summary 的記錄
-        records = await hist_dao.list_unsummarized_by_session(session_db_id)
+        records: list[AgentMsgHistResponse] = [
+            AgentMsgHistResponse.from_entity(msg)
+            for msg in await hist_dao.list_unsummarized_by_session(session_db_id)
+        ]
+
         if not records:
             logger.debug(_("無未 summary 的記錄，session=%s"), session_db_id)
             return None
 
-        # Step 2: 按 Human 分組
-        groups = group_records_by_human(records)
+        # Step 2: 按 step_id 分組
+        groups = group_records_by_step_id(records)
         if not groups:
             logger.debug(_("無有效對話分組，session=%s"), session_db_id)
             return None
@@ -729,12 +807,23 @@ async def review_stm(
         # 計算截斷數量
         truncate_count = compute_truncate_count(summary_groups)
 
+        # 提取被 summary 的 step_ids
+        step_ids = [
+            record.step_id
+            for group in summary_groups
+            for record in group
+            if record.step_id is not None
+        ]
+
+        memory_store = MemoryStore(session_db_id)
+        await memory_store.update_after_summary(step_ids)
+
         return truncate_count, summary_groups, records
 
 
 async def _process_summary_batches(
     session_db_id: int,
-    model: BaseChatModel,
+    model: OpenAIClient,
     summary_groups: list[list],
     hist_dao: AgentMsgHistDAO,
     mem_dao: ShortTermMemDAO,
@@ -751,8 +840,8 @@ async def _process_summary_batches(
     batch_failed = False
 
     for group in summary_groups:
-        # 檢查加入此組是否超過 max_token
-        group_token = sum(r.token for r in group)
+        # 檢查加入此組是否超過 max_token（只計 human/ai）
+        group_token = sum(r.token for r in group if r.msg_type in ["human", "ai"])
 
         if batch_token + group_token > max_token and batch_records:
             # 處理當前批次
@@ -836,7 +925,7 @@ def _format_conversation(records: list) -> str:
 
 async def _process_single_batch(
     session_db_id: int,
-    model: BaseChatModel,
+    model: OpenAIClient,
     batch_records: list,
     mem_dao: ShortTermMemDAO,
 ) -> bool:
@@ -846,8 +935,12 @@ async def _process_single_batch(
         True if batch was processed successfully, False otherwise.
     """
     try:
-        # Log 批次基本信息
-        total_token = sum(getattr(r, "token", 0) for r in batch_records)
+        # Log 批次基本信息（只計 human/ai）
+        total_token = sum(
+            getattr(r, "token", 0)
+            for r in batch_records
+            if getattr(r, "msg_type", "") in ["human", "ai"]
+        )
         logger.info(
             _("Summary 批次處理開始 - session=%s, 記錄數=%s, 總 token=%s"),
             session_db_id,
@@ -873,15 +966,17 @@ async def _process_single_batch(
                 content_preview,
             )
 
-        conversation = _format_conversation(batch_records)
+        # 只傳 human/ai 給 LLM
+        filtered_records = [r for r in batch_records if r.msg_type in ["human", "ai"]]
+        conversation = _format_conversation(filtered_records)
 
         # Log 格式化後的對話內容
         logger.info(_("格式化後嘅對話內容:\n%s"), conversation)
 
         prompt = await apply_stm_prompt_template(conversation)
 
-        response = await model.ainvoke(prompt)
-        content = response.content.strip()  # type: ignore
+        response = await model.ainvoke([HumanMessage(content=prompt)])
+        content: str = model.get_resp_content(response)
 
         # 移除 markdown 代碼塊包裹（如 ```json ... ```）
         if content.startswith("```"):

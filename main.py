@@ -10,6 +10,8 @@ load_dotenv()
 
 sys.path.insert(0, "backend")
 
+from backend.graph.graph_store import GraphStore  # noqa: E402
+
 from api.app import app  # type: ignore[import]  # noqa: E402
 from logging_setup import setup_logging  # type: ignore[import]  # noqa: E402
 

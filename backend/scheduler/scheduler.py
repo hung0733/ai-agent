@@ -36,6 +36,7 @@ class TaskScheduler:
         self._heap: list[tuple[datetime, int]] = []  # (next_run_at, schedule_id)
         self._running = False
         self._task: Optional[asyncio.Task] = None
+        self._last_count: int = 0
 
     def _add_to_heap(self, schedule_id: int, next_run_at: datetime) -> None:
         """將 schedule 加入 heap。"""
@@ -193,7 +194,9 @@ class TaskScheduler:
                 self._heap.clear()
                 for schedule in schedules:
                     self._add_to_heap(schedule.id, schedule.next_run_at)
-                logger.debug(_("已重新載入 %d 個 schedule"), len(self._heap))
+                if len(self._heap) != self._last_count:
+                    logger.debug(_("schedule 數量由 %d 變更為 %d"), self._last_count, len(self._heap))
+                    self._last_count = len(self._heap)
             except Exception as exc:
                 logger.error(_("重新載入 schedule 失敗：%s"), exc)
 

@@ -11,6 +11,8 @@ from langchain_core.language_models.chat_models import BaseChatModel
 
 from pydantic import BaseModel, Field
 
+from agent.agent import Agent
+from models.llm import LLMSet
 from i18n import _
 from msg_queue.models import (
     QueueTaskPriority,
@@ -51,10 +53,8 @@ class QueueTask(BaseModel):
     # Pipeline intermediates (populated by handler stages)
     packed_message: Optional[str] = None
     packed_prompt: Optional[str] = None
-    model_set: Optional[list[BaseChatModel]] = (
-        None  # list[BaseChatModel] once LLM layer exists
-    )
-    agent: Optional[Any] = None  # Agent instance once graph layer exists
+    model_set: Optional[LLMSet] = None  # list[BaseChatModel] once LLM layer exists
+    agent: Optional[Agent] = None  # Agent instance once graph layer exists
 
     # Internal stream channel
     _queue: asyncio.Queue = None  # type: ignore[assignment]
